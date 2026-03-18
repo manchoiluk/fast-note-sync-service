@@ -1,0 +1,38 @@
+name: Auto Build 32-bit (Native JSON)
+
+on:
+  workflow_dispatch: # 手动触发
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Replace Sonic with Native JSON
+        # 注意：GitHub Actions 的 Ubuntu 环境是 Linux，sed -i 不需要像 macOS 那样加空引号
+        run: |
+          grep -rl "sonic.Unmarshal" . | xargs sed -i 's|sonic.Unmarshal|json.Unmarshal|g'
+          grep -rl "sonic.Marshal" . | xargs sed -i 's|sonic.Marshal|json.Marshal|g'
+          grep -rl "github.com/bytedance/sonic" . | xargs sed -i 's|"github.com/bytedance/sonic"|"encoding/json"|g'
+          go mod tidy
+
+      - name: Build for Linux 32-bit (i386)
+        # 对应你命令中的 GOARCH=386
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -ldflags="-s -w" -o fast-note-32bit .
+
+      - name: Upload Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-note-32bit
+          path: fast-note-32bit
