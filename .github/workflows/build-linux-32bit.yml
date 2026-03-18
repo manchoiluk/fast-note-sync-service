@@ -41,3 +41,27 @@ jobs:
         with:
           name: fast-note-32bit
           path: fast-note-32bit
+
+      - name: Generate Release Tag
+        # 为自动构建生成一个时间戳标签，防止标签重复
+        id: tag
+        run: echo "release_tag=Build-$(date +'%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          # 使用上面生成的带时间的标签
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: "Auto Build ${{ steps.tag.outputs.release_tag }} (Native JSON)"
+          body: |
+            ## 自动编译报告
+            - **架构**: Linux 32-bit (i386)
+            - **改动**: 已自动将 `sonic` 替换为原生 `encoding/json`
+            - **状态**: 静态编译 (CGO_ENABLED=0)
+            - **同步自上游**: https://github.com/haierkeys/fast-note-sync-service
+          draft: false
+          prerelease: false
+          files: |
+            fast-note-32bit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
