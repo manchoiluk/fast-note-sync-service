@@ -2,6 +2,7 @@ package api_router
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -58,7 +59,7 @@ func (h *ShareHandler) Create(c *gin.Context) {
 
 	// Call service layer to generate Token (automatically identify type and resolve associated resources)
 	// 调用服务层生成 Token (自动识别类型及解析关联资源)
-	shareRes, err := h.App.ShareService.ShareGenerate(ctx, uid, params.Vault, params.Path, params.PathHash)
+	shareRes, err := h.App.ShareService.ShareGenerate(ctx, uid, params.Vault, params.Path, params.PathHash, params.Password)
 	if err != nil {
 		if cObj, ok := err.(*code.Code); ok {
 			response.ToResponse(cObj)
@@ -103,7 +104,7 @@ func (h *ShareHandler) NoteGet(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	noteDTO, err := h.App.ShareService.GetSharedNote(ctx, shareToken, params.ID)
+	noteDTO, err := h.App.ShareService.GetSharedNote(ctx, shareToken, params.ID, params.Password)
 	if err != nil {
 		if cObj, ok := err.(*code.Code); ok {
 			response.ToResponse(cObj)
@@ -147,7 +148,7 @@ func (h *ShareHandler) FileGet(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	savePath, contentType, mtime, etag, fileName, err := h.App.ShareService.GetSharedFileInfo(ctx, shareToken, params.ID)
+	savePath, contentType, mtime, etag, fileName, err := h.App.ShareService.GetSharedFileInfo(ctx, shareToken, params.ID, params.Password)
 
 	if err != nil {
 		if cObj, ok := err.(*code.Code); ok {
@@ -230,10 +231,12 @@ func (h *ShareHandler) Query(c *gin.Context) {
 	}
 
 	response.ToResponse(code.Success.WithData(&dto.ShareCreateResponse{
-		ID:        mainID,
-		Type:      mainType,
-		Token:     token,
-		ExpiresAt: share.ExpiresAt,
+		ID:         mainID,
+		Type:       mainType,
+		Token:      token,
+		ExpiresAt:  share.ExpiresAt,
+		ShortLink:  share.ShortLink,
+		IsPassword: share.Password != "",
 	}))
 }
 
@@ -282,6 +285,85 @@ func (h *ShareHandler) Cancel(c *gin.Context) {
 	response.ToResponse(code.Success)
 }
 
+// UpdatePassword updates share password
+// @Summary Update share password
+// @Description Set or update password for a share record
+// @Tags Share
+// @Security UserAuthToken
+// @Param token header string true "Auth Token"
+// @Accept json
+// @Produce json
+// @Param params body dto.SharePasswordUpdateRequest true "Update Parameters"
+// @Success 200 {object} pkgapp.Res "Success"
+// @Router /api/share/password [post]
+func (h *ShareHandler) UpdatePassword(c *gin.Context) {
+	response := pkgapp.NewResponse(c)
+	params := &dto.SharePasswordUpdateRequest{}
+
+	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		return
+	}
+
+	uid := pkgapp.GetUID(c)
+	ctx := c.Request.Context()
+
+	err := h.App.ShareService.UpdateSharePassword(ctx, uid, params.Vault, params.Path, params.PathHash, params.Password)
+	if err != nil {
+		if cObj, ok := err.(*code.Code); ok {
+			response.ToResponse(cObj)
+		} else {
+			response.ToResponse(code.Failed.WithDetails(err.Error()))
+		}
+		return
+	}
+
+	response.ToResponse(code.Success)
+}
+
+// CreateShortLink creates a short link for an existing share
+// @Summary Create short link for share
+// @Description Call sink.cool API to generate a short link for a given share record
+// @Tags Share
+// @Security UserAuthToken
+// @Param token header string true "Auth Token"
+// @Accept json
+// @Produce json
+// @Param params body dto.ShareShortLinkCreateRequest true "Short Link Parameters"
+// @Success 200 {object} pkgapp.Res{data=string} "Success"
+// @Router /api/share/short_link [post]
+func (h *ShareHandler) CreateShortLink(c *gin.Context) {
+	response := pkgapp.NewResponse(c)
+	params := &dto.ShareShortLinkCreateRequest{}
+
+	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		return
+	}
+
+	uid := pkgapp.GetUID(c)
+	ctx := c.Request.Context()
+
+	// Detect protocol and host to construct dynamic baseURL
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+
+	shortURL, err := h.App.ShareService.CreateShortLink(ctx, uid, params.Vault, params.Path, params.PathHash, baseURL, params.IsForce)
+	if err != nil {
+		if cObj, ok := err.(*code.Code); ok {
+			response.ToResponse(cObj)
+		} else {
+			response.ToResponse(code.Failed.WithDetails(err.Error()))
+		}
+		return
+	}
+
+	response.ToResponse(code.Success.WithData(shortURL))
+}
+
 // List lists all shares of a user
 // @Summary List shares
 // @Description Get all active and inactive shares of the user, supports sorting and pagination
@@ -316,7 +398,6 @@ func (h *ShareHandler) List(c *gin.Context) {
 
 	response.ToResponseList(code.Success, items, count)
 }
-
 
 // logError records error log, including Trace ID
 // logError 记录错误日志，包含 Trace ID

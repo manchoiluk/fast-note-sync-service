@@ -69,7 +69,11 @@ func ShareAuthToken(shareService service.ShareService) gin.HandlerFunc {
 
 		// Verify Token and its availability in database
 		// 验证 Token 及其在数据库中的生效状态
-		entity, err := shareService.VerifyShare(c.Request.Context(), token, rid, rtp)
+		password := c.Query("password")
+		if password == "" {
+			password = c.PostForm("password")
+		}
+		entity, err := shareService.VerifyShare(c.Request.Context(), token, rid, rtp, password)
 
 		if err != nil {
 			switch err {
@@ -77,6 +81,10 @@ func ShareAuthToken(shareService service.ShareService) gin.HandlerFunc {
 				response.ToResponse(code.ErrorShareRevoked)
 			case domain.ErrShareExpired:
 				response.ToResponse(code.ErrorShareExpired)
+			case domain.ErrSharePasswordRequired:
+				response.ToResponse(code.ErrorSharePasswordRequired)
+			case domain.ErrSharePasswordInvalid:
+				response.ToResponse(code.ErrorSharePasswordInvalid)
 			default:
 				response.ToResponse(code.ErrorShareNotFound)
 			}

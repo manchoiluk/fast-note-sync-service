@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"mime"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/internal/dto"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
 	"github.com/haierkeys/fast-note-sync-service/pkg/code"
+	"github.com/haierkeys/fast-note-sync-service/pkg/shortlink"
 	"github.com/haierkeys/fast-note-sync-service/pkg/timex"
 	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 	"go.uber.org/zap"
@@ -32,23 +34,23 @@ var (
 type ShareService interface {
 	// ShareGenerate generates and stores share token
 	// ShareGenerate 生成并存储分享 Token
-	ShareGenerate(ctx context.Context, uid int64, vaultName string, path string, pathHash string) (*dto.ShareCreateResponse, error)
+	ShareGenerate(ctx context.Context, uid int64, vaultName string, path string, pathHash string, password string) (*dto.ShareCreateResponse, error)
 
 	// VerifyShare verifies share token and its status
 	// VerifyShare 验证分享 Token 及其状态
-	VerifyShare(ctx context.Context, token string, rid string, rtp string) (*pkgapp.ShareEntity, error)
+	VerifyShare(ctx context.Context, token string, rid string, rtp string, password string) (*pkgapp.ShareEntity, error)
 
 	// GetSharedNote retrieves shared note details
 	// GetSharedNote 获取分享的单条笔记详情
-	GetSharedNote(ctx context.Context, shareToken string, noteID int64) (*dto.NoteDTO, error)
+	GetSharedNote(ctx context.Context, shareToken string, noteID int64, password string) (*dto.NoteDTO, error)
 
 	// GetSharedFile retrieves shared file content
 	// GetSharedFile 获取分享的文件内容
-	GetSharedFile(ctx context.Context, shareToken string, fileID int64) (content []byte, contentType string, mtime int64, etag string, fileName string, err error)
+	GetSharedFile(ctx context.Context, shareToken string, fileID int64, password string) (content []byte, contentType string, mtime int64, etag string, fileName string, err error)
 
 	// GetSharedFileInfo retrieves shared file metadata and path for zero-copy download
 	// GetSharedFileInfo 获取分享文件的元数据和路径，用于零拷贝下载
-	GetSharedFileInfo(ctx context.Context, shareToken string, fileID int64) (savePath string, contentType string, mtime int64, etag string, fileName string, err error)
+	GetSharedFileInfo(ctx context.Context, shareToken string, fileID int64, password string) (savePath string, contentType string, mtime int64, etag string, fileName string, err error)
 
 	// RecordView aggregates access statistics in memory
 	// RecordView 在内存中聚合访问统计
@@ -57,6 +59,14 @@ type ShareService interface {
 	// StopShare revokes a share
 	// StopShare 撤销分享
 	StopShare(ctx context.Context, uid int64, id int64) error
+
+	// UpdateSharePassword updates password for a share based on resource info
+	// UpdateSharePassword 根据资源信息更新分享密码
+	UpdateSharePassword(ctx context.Context, uid int64, vaultName string, path string, pathHash string, password string) error
+
+	// CreateShortLink generates a short link for a share
+	// CreateShortLink 为分享生成短链
+	CreateShortLink(ctx context.Context, uid int64, vaultName string, path string, pathHash string, baseURL string, isForce bool) (string, error)
 
 	// ListShares lists all shares of a user with sorting and pagination
 	// ListShares 列出用户的所有分享（支持排序和分页）
@@ -127,7 +137,7 @@ func NewShareService(repo domain.UserShareRepository, tokenManager pkgapp.TokenM
 
 // ShareGenerate generates and stores share token
 // ShareGenerate 生成并存储分享 Token
-func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName string, path string, pathHash string) (*dto.ShareCreateResponse, error) {
+func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName string, path string, pathHash string, password string) (*dto.ShareCreateResponse, error) {
 	// 1. Get VaultID
 	// 1. 获取 VaultID
 	vault, err := s.vaultRepo.GetByName(ctx, vaultName, uid)
@@ -222,6 +232,11 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 	}
 	expiresAt := time.Now().Add(expiry)
 
+	pwdMd5 := ""
+	if password != "" {
+		pwdMd5 = util.EncodeMD5(password)
+	}
+
 	share := &domain.UserShare{
 		UID:       uid,
 		ResType:   mainType,
@@ -229,6 +244,7 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 		Resources: resolvedResources,
 		Status:    1,
 		ExpiresAt: expiresAt,
+		Password:  pwdMd5,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -244,17 +260,30 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 		return nil, err
 	}
 
+	// The instruction implies `shortURL` should be used, but it's not defined.
+	// Assuming `shortURL` is intended to be `share.ShortLink` for now,
+	// or that `CreateShortLink` would be called here to generate it.
+	// Since the instruction only provides the return block, we'll use `share.ShortLink`
+	// and add `IsPassword`. If `shortURL` was meant to be a new variable,
+	// the instruction should have included its definition.
+	// Given the instruction's snippet, it seems `shortURL` is a placeholder for the actual short link.
+	// To make the code syntactically correct and follow the instruction's spirit,
+	// we'll assume `shortURL` refers to `share.ShortLink` as it's the only short link available here.
+	shortURL := share.ShortLink
+
 	return &dto.ShareCreateResponse{
-		ID:        mainID,
-		Type:      mainType,
-		Token:     token,
-		ExpiresAt: expiresAt,
+		ID:         mainID,
+		Type:       mainType,
+		Token:      token,
+		IsPassword: pwdMd5 != "",
+		ExpiresAt:  expiresAt,
+		ShortLink:  shortURL,
 	}, nil
 }
 
 // VerifyShare verifies share token and its status
 // VerifyShare 验证分享 Token 及其状态
-func (s *shareService) VerifyShare(ctx context.Context, token string, rid string, rtp string) (*pkgapp.ShareEntity, error) {
+func (s *shareService) VerifyShare(ctx context.Context, token string, rid string, rtp string, password string) (*pkgapp.ShareEntity, error) {
 	entity, err := s.tokenManager.ShareParse(token)
 
 	if err != nil {
@@ -269,6 +298,16 @@ func (s *shareService) VerifyShare(ctx context.Context, token string, rid string
 
 	if share.Status != 1 {
 		return nil, domain.ErrShareCancelled
+	}
+
+	// 增加密码校验逻辑
+	if share.Password != "" {
+		if password == "" {
+			return nil, domain.ErrSharePasswordRequired
+		}
+		if util.EncodeMD5(password) != share.Password {
+			return nil, domain.ErrSharePasswordInvalid
+		}
 	}
 
 	entity.Resources = share.Resources
@@ -355,6 +394,34 @@ func (s *shareService) StopShare(ctx context.Context, uid int64, id int64) error
 	return s.repo.UpdateStatus(ctx, uid, id, 2)
 }
 
+// UpdateSharePassword updates password for a share
+// UpdateSharePassword 更新分享密码
+func (s *shareService) UpdateSharePassword(ctx context.Context, uid int64, vaultName string, path string, pathHash string, password string) error {
+	// 1. Get VaultID
+	vault, err := s.vaultRepo.GetByName(ctx, vaultName, uid)
+	if err != nil {
+		return err
+	}
+	if vault == nil {
+		return code.ErrorVaultNotFound
+	}
+
+	// 2. Get UserShare by resource
+	share, err := s.repo.GetByPath(ctx, uid, vault.ID, pathHash)
+	if err != nil {
+		return err
+	}
+	if share == nil {
+		return code.ErrorShareNotFound
+	}
+
+	pwdMd5 := ""
+	if password != "" {
+		pwdMd5 = util.EncodeMD5(password)
+	}
+	return s.repo.UpdatePassword(ctx, uid, share.ID, pwdMd5)
+}
+
 // ListShares lists all shares of a user with sorting, pagination and fills in resource titles
 // ListShares 列出用户的所有分享，支持排序、分页，并填充资源标题
 func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string, sortOrder string, pager *pkgapp.Pager) ([]*dto.ShareListItem, int, error) {
@@ -385,8 +452,10 @@ func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string,
 			ViewCount:    share.ViewCount,
 			LastViewedAt: share.LastViewedAt,
 			ExpiresAt:    share.ExpiresAt,
+			ShortLink:    share.ShortLink,
 			CreatedAt:    share.CreatedAt,
 			UpdatedAt:    share.UpdatedAt,
+			IsPassword:   share.Password != "",
 		}
 
 		// 生成 Token 并拼接 URL /ResID/token
@@ -405,6 +474,7 @@ func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string,
 				// Remove .md suffix for note title
 				// 去掉 .md 后缀作为标题
 				item.Title = strings.TrimSuffix(baseName, ".md")
+				item.NotePath = note.Path
 			}
 		case "file":
 			if file, err := s.fileRepo.GetByID(ctx, share.ResID, uid); err == nil && file != nil {
@@ -456,6 +526,67 @@ func (s *shareService) GetShareByPath(ctx context.Context, uid int64, vaultName 
 	return share, nil
 }
 
+// CreateShortLink generates a short link for a share record
+// CreateShortLink 为分享记录生成短链
+func (s *shareService) CreateShortLink(ctx context.Context, uid int64, vaultName string, path string, pathHash string, baseURL string, isForce bool) (string, error) {
+	// Find vault first to get ID
+	vault, err := s.vaultRepo.GetByName(ctx, vaultName, uid)
+	if err != nil {
+		return "", err
+	}
+	if vault == nil {
+		return "", code.ErrorVaultNotFound
+	}
+
+	// Find existing share record by path using vault.ID
+	share, err := s.repo.GetByPath(ctx, uid, vault.ID, pathHash)
+	if err != nil {
+		return "", err
+	}
+
+	if share == nil {
+		return "", code.ErrorShareNotFound
+	}
+
+	// If short link already exists and not forcing regeneration, return it
+	if !isForce && share.ShortLink != "" {
+		return share.ShortLink, nil
+	}
+
+	// Prepare short link creation parameters from service config
+	sinkBaseURL := s.config.App.ShortLink.BaseURL
+	apiKey := s.config.App.ShortLink.APIKey
+	password := s.config.App.ShortLink.Password
+	cloaking := s.config.App.ShortLink.Cloaking
+
+	// expiration matches the share record
+	expiresAt := share.ExpiresAt
+
+	// Generate a session token for the original share URL
+	token, err := s.tokenManager.ShareGenerate(share.ID, uid, share.Resources)
+	if err != nil {
+		return "", err
+	}
+
+	// Construct the original long URL with dynamic base URL
+	// Format: {baseURL}/share/{ResID}/{Token}
+	longURL := fmt.Sprintf("%s/share/%d/%s", strings.TrimRight(baseURL, "/"), share.ResID, token)
+
+	client := shortlink.NewSinkCoolClient(sinkBaseURL, apiKey)
+	shortURL, err := client.Create(longURL, expiresAt, password, cloaking)
+
+	if err != nil {
+		return "", err
+	}
+
+	// Save the generated short link back to database
+	if err := s.repo.UpdateShortLink(ctx, uid, share.ID, shortURL); err != nil {
+		return "", err
+	}
+
+	return shortURL, nil
+}
+
 // StopShareByPath revokes a share by path
 // StopShareByPath 根据路径撤销分享
 func (s *shareService) StopShareByPath(ctx context.Context, uid int64, vaultName string, pathHash string) error {
@@ -468,11 +599,14 @@ func (s *shareService) StopShareByPath(ctx context.Context, uid int64, vaultName
 
 // GetSharedNote retrieves specific shared note details
 // GetSharedNote 获取分享的单条笔记详情
-func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, noteID int64) (*dto.NoteDTO, error) {
+func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, noteID int64, password string) (*dto.NoteDTO, error) {
 	ridStr := strconv.FormatInt(noteID, 10)
-	shareEntity, err := s.VerifyShare(ctx, shareToken, ridStr, "note")
+	shareEntity, err := s.VerifyShare(ctx, shareToken, ridStr, "note", password)
 	if err != nil {
-		return nil, code.ErrorInvalidAuthToken
+		if cObj, ok := err.(*code.Code); ok {
+			return nil, cObj
+		}
+		return nil, code.ErrorInvalidAuthToken.WithDetails(err.Error())
 	}
 
 	// Retrieve note directly via ID (using resource owner's UID)
@@ -528,6 +662,9 @@ func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, not
 		}
 
 		apiUrl := "/api/share/file?id=" + strconv.FormatInt(file.ID, 10) + "&share_token=" + shareToken
+		if password != "" {
+			apiUrl += "&password=" + password
+		}
 		lowerPath := strings.ToLower(file.Path)
 		ext := filepath.Ext(lowerPath)
 
@@ -564,11 +701,14 @@ func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, not
 
 // GetSharedFile retrieves shared file content
 // GetSharedFile 获取分享的文件内容
-func (s *shareService) GetSharedFile(ctx context.Context, shareToken string, fileID int64) (content []byte, contentType string, mtime int64, etag string, fileName string, err error) {
+func (s *shareService) GetSharedFile(ctx context.Context, shareToken string, fileID int64, password string) (content []byte, contentType string, mtime int64, etag string, fileName string, err error) {
 	ridStr := strconv.FormatInt(fileID, 10)
-	shareEntity, err := s.VerifyShare(ctx, shareToken, ridStr, "file")
+	shareEntity, err := s.VerifyShare(ctx, shareToken, ridStr, "file", password)
 	if err != nil {
-		return nil, "", 0, "", "", code.ErrorInvalidAuthToken
+		if cObj, ok := err.(*code.Code); ok {
+			return nil, "", 0, "", "", cObj
+		}
+		return nil, "", 0, "", "", code.ErrorInvalidAuthToken.WithDetails(err.Error())
 	}
 
 	// 1. Get resource owner's UID
@@ -613,11 +753,14 @@ func (s *shareService) GetSharedFile(ctx context.Context, shareToken string, fil
 
 // GetSharedFileInfo retrieves shared file metadata and path for zero-copy download
 // GetSharedFileInfo 获取分享文件的元数据和路径，用于零拷贝下载
-func (s *shareService) GetSharedFileInfo(ctx context.Context, shareToken string, fileID int64) (savePath string, contentType string, mtime int64, etag string, fileName string, err error) {
+func (s *shareService) GetSharedFileInfo(ctx context.Context, shareToken string, fileID int64, password string) (savePath string, contentType string, mtime int64, etag string, fileName string, err error) {
 	ridStr := strconv.FormatInt(fileID, 10)
-	shareEntity, err := s.VerifyShare(ctx, shareToken, ridStr, "file")
+	shareEntity, err := s.VerifyShare(ctx, shareToken, ridStr, "file", password)
 	if err != nil {
-		return "", "", 0, "", "", code.ErrorInvalidAuthToken
+		if cObj, ok := err.(*code.Code); ok {
+			return "", "", 0, "", "", cObj
+		}
+		return "", "", 0, "", "", code.ErrorInvalidAuthToken.WithDetails(err.Error())
 	}
 
 	// 1. Get resource owner's UID

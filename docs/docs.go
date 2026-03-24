@@ -3462,6 +3462,13 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "example": "note1.md,note2.md",
+                        "description": "Comma-separated exact path list for share filter // 逗号分隔的精确路径列表，用于分享筛选",
+                        "name": "paths",
+                        "in": "query"
+                    },
+                    {
                         "type": "boolean",
                         "example": true,
                         "description": "Whether to search content // 是否搜索内容",
@@ -4058,6 +4065,13 @@ const docTemplate = `{
                         "name": "id",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "123456",
+                        "description": "Share password // 分享密码",
+                        "name": "password",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4100,6 +4114,13 @@ const docTemplate = `{
                         "name": "id",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "123456",
+                        "description": "Share password // 分享密码",
+                        "name": "password",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4115,6 +4136,110 @@ const docTemplate = `{
                                     "properties": {
                                         "data": {
                                             "$ref": "#/definitions/dto.NoteDTO"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/share/password": {
+            "post": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Set or update password for a share record",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Share"
+                ],
+                "summary": "Update share password",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Auth Token",
+                        "name": "token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Update Parameters",
+                        "name": "params",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SharePasswordUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/share/short_link": {
+            "post": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Call sink.cool API to generate a short link for a given share record",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Share"
+                ],
+                "summary": "Create short link for share",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Auth Token",
+                        "name": "token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Short Link Parameters",
+                        "name": "params",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.ShareShortLinkCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/app.Res"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "string"
                                         }
                                     }
                                 }
@@ -6859,6 +6984,11 @@ const docTemplate = `{
                 "vault"
             ],
             "properties": {
+                "password": {
+                    "description": "Share password // 分享密码",
+                    "type": "string",
+                    "example": "123456"
+                },
                 "path": {
                     "description": "Resource path // 资源路径",
                     "type": "string",
@@ -6879,13 +7009,21 @@ const docTemplate = `{
         "dto.ShareCreateResponse": {
             "type": "object",
             "properties": {
-                "expires_at": {
+                "expiresAt": {
                     "description": "Expiration time // 过期时间",
                     "type": "string"
                 },
                 "id": {
                     "description": "ID of the note or file table (primary resource ID) // 笔记或文件表 ID（主资源 ID）",
                     "type": "integer"
+                },
+                "isPassword": {
+                    "description": "Whether password is set // 是否设置了密码",
+                    "type": "boolean"
+                },
+                "shortLink": {
+                    "description": "Short link // 短链",
+                    "type": "string"
                 },
                 "token": {
                     "description": "Share Token // 分享 Token",
@@ -6900,10 +7038,10 @@ const docTemplate = `{
         "dto.ShareListItem": {
             "type": "object",
             "properties": {
-                "created_at": {
+                "createdAt": {
                     "type": "string"
                 },
-                "expires_at": {
+                "expiresAt": {
                     "description": "Expiration time // 过期时间",
                     "type": "string"
                 },
@@ -6911,8 +7049,16 @@ const docTemplate = `{
                     "description": "Share ID // 分享记录 ID",
                     "type": "integer"
                 },
-                "last_viewed_at": {
+                "isPassword": {
+                    "description": "Whether password is set // 是否设置了密码",
+                    "type": "boolean"
+                },
+                "lastViewedAt": {
                     "description": "Last viewed time // 最后访问时间",
+                    "type": "string"
+                },
+                "notePath": {
+                    "description": "Note path, for frontend share filter matching // 笔记路径，用于前端分享筛选匹配",
                     "type": "string"
                 },
                 "res": {
@@ -6924,6 +7070,10 @@ const docTemplate = `{
                             "type": "string"
                         }
                     }
+                },
+                "shortLink": {
+                    "description": "Short link // 短链",
+                    "type": "string"
                 },
                 "status": {
                     "description": "Status: 1-Active, 2-Cancelled // 状态: 1-有效, 2-已撤销",
@@ -6937,12 +7087,76 @@ const docTemplate = `{
                     "description": "User ID // 用户 ID",
                     "type": "integer"
                 },
-                "updated_at": {
+                "updatedAt": {
                     "type": "string"
                 },
-                "view_count": {
+                "url": {
+                    "description": "Share URL (path format: /id/token) // 分享 URL (路径格式: /id/token)",
+                    "type": "string"
+                },
+                "viewCount": {
                     "description": "View count // 访问次数",
                     "type": "integer"
+                }
+            }
+        },
+        "dto.SharePasswordUpdateRequest": {
+            "type": "object",
+            "required": [
+                "path",
+                "pathHash",
+                "vault"
+            ],
+            "properties": {
+                "password": {
+                    "description": "New password // 新密码",
+                    "type": "string",
+                    "example": "123456"
+                },
+                "path": {
+                    "description": "Resource path // 资源路径",
+                    "type": "string",
+                    "example": "未命名.md"
+                },
+                "pathHash": {
+                    "description": "Resource path Hash // 资源路径哈希",
+                    "type": "string",
+                    "example": "-677306325"
+                },
+                "vault": {
+                    "description": "Vault name // 保险库名称",
+                    "type": "string",
+                    "example": "test"
+                }
+            }
+        },
+        "dto.ShareShortLinkCreateRequest": {
+            "type": "object",
+            "required": [
+                "path",
+                "pathHash",
+                "vault"
+            ],
+            "properties": {
+                "is_force": {
+                    "description": "Whether to force regeneration // 是否强制重新生成",
+                    "type": "boolean",
+                    "example": false
+                },
+                "path": {
+                    "description": "Path // 路径",
+                    "type": "string",
+                    "example": "notes/todo.md"
+                },
+                "pathHash": {
+                    "description": "Path hash // 路径哈希",
+                    "type": "string",
+                    "example": "..."
+                },
+                "vault": {
+                    "description": "Vault name // 库名",
+                    "type": "string",
+                    "example": "work"
                 }
             }
         },
