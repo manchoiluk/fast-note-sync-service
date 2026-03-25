@@ -66,7 +66,7 @@ type ShareService interface {
 
 	// CreateShortLink generates a short link for a share
 	// CreateShortLink 为分享生成短链
-	CreateShortLink(ctx context.Context, uid int64, vaultName string, path string, pathHash string, baseURL string, isForce bool) (string, error)
+	CreateShortLink(ctx context.Context, uid int64, vaultName string, path string, pathHash string, baseURL string, longURL string, isForce bool) (string, error)
 
 	// ListShares lists all shares of a user with sorting and pagination
 	// ListShares 列出用户的所有分享（支持排序和分页）
@@ -249,6 +249,12 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 		UpdatedAt: time.Now(),
 	}
 
+	// 幂等：若该资源已有 active 分享，先撤销，避免重复计数
+	// Idempotent: revoke any existing active share before creating a new one
+	if existing, err := s.repo.GetByRes(ctx, uid, mainType, mainID); err == nil && existing != nil {
+		_ = s.StopShare(ctx, uid, existing.ID)
+	}
+
 	if err := s.repo.Create(ctx, uid, share); err != nil {
 		return nil, err
 	}
@@ -260,24 +266,13 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 		return nil, err
 	}
 
-	// The instruction implies `shortURL` should be used, but it's not defined.
-	// Assuming `shortURL` is intended to be `share.ShortLink` for now,
-	// or that `CreateShortLink` would be called here to generate it.
-	// Since the instruction only provides the return block, we'll use `share.ShortLink`
-	// and add `IsPassword`. If `shortURL` was meant to be a new variable,
-	// the instruction should have included its definition.
-	// Given the instruction's snippet, it seems `shortURL` is a placeholder for the actual short link.
-	// To make the code syntactically correct and follow the instruction's spirit,
-	// we'll assume `shortURL` refers to `share.ShortLink` as it's the only short link available here.
-	shortURL := share.ShortLink
-
 	return &dto.ShareCreateResponse{
 		ID:         mainID,
 		Type:       mainType,
 		Token:      token,
 		IsPassword: pwdMd5 != "",
 		ExpiresAt:  expiresAt,
-		ShortLink:  shortURL,
+		ShortLink:  share.ShortLink,
 	}, nil
 }
 
@@ -470,11 +465,13 @@ func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string,
 		switch share.ResType {
 		case "note":
 			if note, err := s.noteRepo.GetByID(ctx, share.ResID, uid); err == nil && note != nil {
-				baseName := filepath.Base(note.Path)
-				// Remove .md suffix for note title
-				// 去掉 .md 后缀作为标题
-				item.Title = strings.TrimSuffix(baseName, ".md")
-				item.NotePath = note.Path
+				if note.Action != domain.NoteActionDelete {
+					baseName := filepath.Base(note.Path)
+					// Remove .md suffix for note title
+					// 去掉 .md 后缀作为标题
+					item.Title = strings.TrimSuffix(baseName, ".md")
+					item.NotePath = note.Path
+				}
 			}
 		case "file":
 			if file, err := s.fileRepo.GetByID(ctx, share.ResID, uid); err == nil && file != nil {
@@ -528,7 +525,7 @@ func (s *shareService) GetShareByPath(ctx context.Context, uid int64, vaultName 
 
 // CreateShortLink generates a short link for a share record
 // CreateShortLink 为分享记录生成短链
-func (s *shareService) CreateShortLink(ctx context.Context, uid int64, vaultName string, path string, pathHash string, baseURL string, isForce bool) (string, error) {
+func (s *shareService) CreateShortLink(ctx context.Context, uid int64, vaultName string, path string, pathHash string, baseURL string, longURL string, isForce bool) (string, error) {
 	// Find vault first to get ID
 	vault, err := s.vaultRepo.GetByName(ctx, vaultName, uid)
 	if err != nil {
@@ -562,18 +559,31 @@ func (s *shareService) CreateShortLink(ctx context.Context, uid int64, vaultName
 	// expiration matches the share record
 	expiresAt := share.ExpiresAt
 
-	// Generate a session token for the original share URL
-	token, err := s.tokenManager.ShareGenerate(share.ID, uid, share.Resources)
-	if err != nil {
-		return "", err
+	// Use client-provided URL if available; otherwise fall back to generating one
+	// 优先使用客户端传入的完整分享 URL，避免因重新生成 token 导致 URL 不一致
+	if longURL == "" {
+		token, err := s.tokenManager.ShareGenerate(share.ID, uid, share.Resources)
+		if err != nil {
+			return "", err
+		}
+		longURL = fmt.Sprintf("%s/share/%d/%s", strings.TrimRight(baseURL, "/"), share.ResID, token)
 	}
 
-	// Construct the original long URL with dynamic base URL
-	// Format: {baseURL}/share/{ResID}/{Token}
-	longURL := fmt.Sprintf("%s/share/%d/%s", strings.TrimRight(baseURL, "/"), share.ResID, token)
-
 	client := shortlink.NewSinkCoolClient(sinkBaseURL, apiKey)
-	shortURL, err := client.Create(longURL, expiresAt, password, cloaking)
+
+	title := ""
+	switch share.ResType {
+	case "note":
+		if note, err := s.noteRepo.GetByID(ctx, share.ResID, uid); err == nil && note != nil {
+			title = strings.TrimSuffix(filepath.Base(note.Path), ".md")
+		}
+	case "file":
+		if file, err := s.fileRepo.GetByID(ctx, share.ResID, uid); err == nil && file != nil {
+			title = filepath.Base(file.Path)
+		}
+	}
+
+	shortURL, err := client.Create(longURL, expiresAt, password, cloaking, title)
 
 	if err != nil {
 		return "", err
