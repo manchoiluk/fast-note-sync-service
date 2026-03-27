@@ -12,6 +12,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/internal/dto"
 	"github.com/haierkeys/fast-note-sync-service/internal/middleware"
 	"github.com/haierkeys/fast-note-sync-service/internal/routers/api_router"
+	"github.com/haierkeys/fast-note-sync-service/internal/routers/mcp_router"
 	"github.com/haierkeys/fast-note-sync-service/internal/routers/websocket_router"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
 	"github.com/haierkeys/fast-note-sync-service/pkg/limiter"
@@ -166,6 +167,7 @@ func NewRouter(frontendFiles embed.FS, appContainer *app.App, uni *ut.UniversalT
 		backupHandler := api_router.NewBackupHandler(appContainer)
 		gitSyncHandler := api_router.NewGitSyncHandler(appContainer)
 		settingHandler := api_router.NewSettingHandler(appContainer, wss)
+		mcpHandler := mcp_router.NewMCPHandler(appContainer, wss)
 
 		api.POST("/user/register", userHandler.Register)
 		api.POST("/user/login", userHandler.Login)
@@ -235,6 +237,7 @@ func NewRouter(frontendFiles embed.FS, appContainer *app.App, uni *ut.UniversalT
 			auth.POST("/note/rename", noteHandler.Rename)
 			auth.GET("/notes", noteHandler.List)
 			auth.DELETE("/note/recycle-clear", noteHandler.RecycleClear)
+			auth.GET("/notes/share-paths", shareHandler.NoteSharePaths)
 
 			auth.GET("/folder", folderHandler.Get)
 			auth.POST("/folder", folderHandler.Create)
@@ -295,6 +298,10 @@ func NewRouter(frontendFiles embed.FS, appContainer *app.App, uni *ut.UniversalT
 			auth.DELETE("/setting", settingHandler.Delete)
 			auth.POST("/setting/rename", settingHandler.Rename)
 			auth.GET("/settings", settingHandler.List)
+
+			// MCP SSE
+			auth.GET("/mcp/sse", mcpHandler.HandleSSE)
+			auth.POST("/mcp/message", mcpHandler.HandleMessage)
 		}
 
 	}
@@ -317,15 +324,15 @@ func NewRouter(frontendFiles embed.FS, appContainer *app.App, uni *ut.UniversalT
 	})
 
 	// Read swagger files from embedded FS
-	swaggerJSON, _ := frontendFiles.ReadFile("docs/swagger.json")
-	r.GET("/rest_doc/", func(c *gin.Context) {
-		c.Redirect(http.StatusMovedPermanently, "/rest_doc.json")
+	swaggerJSON, _ := frontendFiles.ReadFile("docs/openapi3.json")
+	r.GET("/openapi/", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/openapi.json")
 	})
-	r.GET("/rest_doc.json", func(c *gin.Context) {
+	r.GET("/openapi.json", func(c *gin.Context) {
 		c.Data(http.StatusOK, "application/json; charset=utf-8", swaggerJSON)
 	})
 	swaggerYAML, _ := frontendFiles.ReadFile("docs/swagger.yaml")
-	r.GET("/rest_doc.yaml", func(c *gin.Context) {
+	r.GET("/openapi.yaml", func(c *gin.Context) {
 		c.Data(http.StatusOK, "application/x-yaml; charset=utf-8", swaggerYAML)
 	})
 
