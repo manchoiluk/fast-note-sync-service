@@ -11,10 +11,11 @@ import (
 
 // DbCleanTask 清理任务
 type DbCleanTask struct {
-	app                 *app.App
-	logger              *zap.Logger
-	retentionDuration   time.Duration
-	historyKeepVersions int
+	app                      *app.App
+	logger                   *zap.Logger
+	retentionDuration        time.Duration
+	syncLogRetentionDuration time.Duration
+	historyKeepVersions      int
 }
 
 // Name 返回任务名称
@@ -24,7 +25,7 @@ func (t *DbCleanTask) Name() string {
 
 // LoopInterval 返回执行间隔
 func (t *DbCleanTask) LoopInterval() time.Duration {
-	return 10 * time.Minute
+	return 12 * time.Hour
 }
 
 // IsStartupRun 是否立即执行一次
@@ -89,6 +90,45 @@ func (t *DbCleanTask) Run(ctx context.Context) error {
 			zap.String("service", "NoteHistoryService"))
 	}
 
+	// 清理 SyncLog
+	syncLogCutoffTime := time.Now().Add(-t.syncLogRetentionDuration).UnixMilli()
+	if err := t.app.SyncLogService.CleanupByTime(ctx, syncLogCutoffTime); err != nil {
+		errs = append(errs, err)
+		t.logger.Error("cleanup failed",
+			zap.String("task", t.Name()),
+			zap.String("service", "SyncLogService"),
+			zap.Error(err))
+	} else {
+		t.logger.Info("cleanup success",
+			zap.String("task", t.Name()),
+			zap.String("service", "SyncLogService"))
+	}
+
+	// 清理重复记录 (按 Path)
+	if err := t.app.NoteService.CleanDuplicateNotesAll(ctx); err != nil {
+		errs = append(errs, err)
+		t.logger.Error("cleanup duplicate failed",
+			zap.String("task", t.Name()),
+			zap.String("service", "NoteService"),
+			zap.Error(err))
+	} else {
+		t.logger.Info("cleanup duplicate success",
+			zap.String("task", t.Name()),
+			zap.String("service", "NoteService"))
+	}
+
+	if err := t.app.FileService.CleanDuplicateFilesAll(ctx); err != nil {
+		errs = append(errs, err)
+		t.logger.Error("cleanup duplicate failed",
+			zap.String("task", t.Name()),
+			zap.String("service", "FileService"),
+			zap.Error(err))
+	} else {
+		t.logger.Info("cleanup duplicate success",
+			zap.String("task", t.Name()),
+			zap.String("service", "FileService"))
+	}
+
 	// 清理闲置数据库连接 (保持 1 小时闲置)
 	t.app.Dao.CleanupConnections(time.Hour)
 
@@ -114,6 +154,16 @@ func NewDbCleanTask(appContainer *app.App) (Task, error) {
 		return nil, nil
 	}
 
+	// 解析同步日志保留时间
+	syncLogRetentionTimeStr := appContainer.Config().App.SyncLogRetentionTime
+	if syncLogRetentionTimeStr == "" {
+		syncLogRetentionTimeStr = "30d" // Default
+	}
+	syncLogDuration, err := util.ParseDuration(syncLogRetentionTimeStr)
+	if err != nil {
+		syncLogDuration = 30 * 24 * time.Hour // Fallback
+	}
+
 	// 获取历史记录保留版本数，默认 10
 	historyKeepVersions := appContainer.Config().App.HistoryKeepVersions
 	if historyKeepVersions <= 0 {
@@ -121,10 +171,11 @@ func NewDbCleanTask(appContainer *app.App) (Task, error) {
 	}
 
 	return &DbCleanTask{
-		app:                 appContainer,
-		logger:              appContainer.Logger(),
-		retentionDuration:   duration,
-		historyKeepVersions: historyKeepVersions,
+		app:                      appContainer,
+		logger:                   appContainer.Logger(),
+		retentionDuration:        duration,
+		syncLogRetentionDuration: syncLogDuration,
+		historyKeepVersions:      historyKeepVersions,
 	}, nil
 }
 

@@ -43,8 +43,10 @@ func (h *SettingWSHandler) SettingModify(c *pkgapp.WebsocketClient, msg *pkgapp.
 
 	h.App.VaultService.GetOrCreate(ctx, c.User.UID, params.Vault)
 
+	settingSvc := h.App.GetSettingService(c.ClientType, c.ClientName, c.ClientVersion)
+
 	checkParams := convert.StructAssign(params, &dto.SettingUpdateCheckRequest{}).(*dto.SettingUpdateCheckRequest)
-	updateMode, settingCheck, err := h.App.SettingService.UpdateCheck(ctx, c.User.UID, checkParams)
+	updateMode, settingCheck, err := settingSvc.UpdateCheck(ctx, c.User.UID, checkParams)
 	if err != nil {
 		h.respondError(c, code.ErrorSettingModifyOrCreateFailed, err, "websocket_router.setting.SettingModify.UpdateCheck")
 		return
@@ -52,13 +54,17 @@ func (h *SettingWSHandler) SettingModify(c *pkgapp.WebsocketClient, msg *pkgapp.
 
 	switch updateMode {
 	case "UpdateContent", "Create":
-		_, setting, err := h.App.SettingService.ModifyOrCreate(ctx, c.User.UID, params, true)
+		_, setting, err := settingSvc.ModifyOrCreate(ctx, c.User.UID, params, true)
 		if err != nil {
 			h.respondError(c, code.ErrorSettingModifyOrCreateFailed, err, "websocket_router.setting.SettingModify.ModifyOrCreate")
 			return
 		}
 
-		c.ToResponse(code.Success)
+		c.ToResponse(code.Success.WithData(dto.SettingModifyAckMessage{
+			LastTime: setting.UpdatedTimestamp,
+			Path:     setting.Path,
+			PathHash: setting.PathHash,
+		}).WithVault(params.Vault), string(dto.SettingModifyAck))
 		c.BroadcastResponse(code.Success.WithData(
 			dto.SettingSyncModifyMessage{
 				Vault:            params.Vault,
@@ -74,17 +80,14 @@ func (h *SettingWSHandler) SettingModify(c *pkgapp.WebsocketClient, msg *pkgapp.
 		return
 
 	case "UpdateMtime":
-		c.ToResponse(code.Success.WithData(
-			dto.SettingSyncMtimeMessage{
-				Path:             settingCheck.Path,
-				Ctime:            settingCheck.Ctime,
-				Mtime:            settingCheck.Mtime,
-				UpdatedTimestamp: settingCheck.UpdatedTimestamp,
-			},
-		).WithVault(params.Vault), dto.SettingSyncMtime)
+		c.ToResponse(code.Success.WithData(dto.SettingModifyAckMessage{
+			LastTime: settingCheck.UpdatedTimestamp,
+			Path:     settingCheck.Path,
+			PathHash: settingCheck.PathHash,
+		}).WithVault(params.Vault), string(dto.SettingModifyAck))
 		return
 	default:
-		c.ToResponse(code.SuccessNoUpdate)
+		c.ToResponse(code.SuccessNoUpdate.WithVault(params.Vault))
 		return
 	}
 }
@@ -105,7 +108,9 @@ func (h *SettingWSHandler) SettingModifyCheck(c *pkgapp.WebsocketClient, msg *pk
 
 	h.App.VaultService.GetOrCreate(ctx, c.User.UID, params.Vault)
 
-	updateMode, settingCheck, err := h.App.SettingService.UpdateCheck(ctx, c.User.UID, params)
+	settingSvc := h.App.GetSettingService(c.ClientType, c.ClientName, c.ClientVersion)
+
+	updateMode, settingCheck, err := settingSvc.UpdateCheck(ctx, c.User.UID, params)
 	if err != nil {
 		h.respondError(c, code.ErrorSettingUpdateCheckFailed, err, "websocket_router.setting.SettingModifyCheck.UpdateCheck")
 		return
@@ -117,7 +122,7 @@ func (h *SettingWSHandler) SettingModifyCheck(c *pkgapp.WebsocketClient, msg *pk
 			dto.SettingSyncNeedUploadMessage{
 				Path: settingCheck.Path,
 			},
-		).WithVault(params.Vault), dto.SettingSyncNeedUpload)
+		), dto.SettingSyncNeedUpload)
 		return
 	case "UpdateMtime":
 		c.ToResponse(code.Success.WithData(
@@ -127,10 +132,10 @@ func (h *SettingWSHandler) SettingModifyCheck(c *pkgapp.WebsocketClient, msg *pk
 				Mtime:            settingCheck.Mtime,
 				UpdatedTimestamp: settingCheck.UpdatedTimestamp,
 			},
-		).WithVault(params.Vault), dto.SettingSyncMtime)
+		), dto.SettingSyncMtime)
 		return
 	default:
-		c.ToResponse(code.SuccessNoUpdate)
+		c.ToResponse(code.SuccessNoUpdate.WithVault(params.Vault))
 		return
 	}
 }
@@ -151,13 +156,19 @@ func (h *SettingWSHandler) SettingDelete(c *pkgapp.WebsocketClient, msg *pkgapp.
 
 	h.App.VaultService.GetOrCreate(ctx, c.User.UID, params.Vault)
 
-	setting, err := h.App.SettingService.Delete(ctx, c.User.UID, params)
+	settingSvc := h.App.GetSettingService(c.ClientType, c.ClientName, c.ClientVersion)
+
+	setting, err := settingSvc.Delete(ctx, c.User.UID, params)
 	if err != nil {
 		h.respondError(c, code.ErrorSettingDeleteFailed, err, "websocket_router.setting.SettingDelete.Delete")
 		return
 	}
 
-	c.ToResponse(code.Success)
+	c.ToResponse(code.Success.WithData(dto.SettingDeleteAckMessage{
+		LastTime: setting.UpdatedTimestamp,
+		Path:     setting.Path,
+		PathHash: setting.PathHash,
+	}).WithVault(params.Vault), string(dto.SettingDeleteAck))
 	c.BroadcastResponse(code.Success.WithData(
 		dto.SettingSyncDeleteMessage{
 			Path:             setting.Path,
@@ -185,7 +196,13 @@ func (h *SettingWSHandler) SettingSync(c *pkgapp.WebsocketClient, msg *pkgapp.We
 
 	h.App.VaultService.GetOrCreate(ctx, c.User.UID, params.Vault)
 
-	list, err := h.App.SettingService.Sync(ctx, c.User.UID, params)
+	settingSvc := h.App.GetSettingService(c.ClientType, c.ClientName, c.ClientVersion)
+
+	// Record sync start time before querying to avoid missing writes that occur during query processing.
+	// 查询前记录同步开始时间，防止查询处理期间的写入被遗漏（经典增量同步快照时间戳方案）。
+	syncStartTime := timex.Now().UnixMilli()
+
+	list, err := settingSvc.Sync(ctx, c.User.UID, params)
 	if err != nil {
 		h.respondError(c, code.ErrorSettingListFailed, err, "websocket_router.setting.SettingSync.Sync")
 		return
@@ -215,6 +232,8 @@ func (h *SettingWSHandler) SettingSync(c *pkgapp.WebsocketClient, msg *pkgapp.We
 	// Handle settings deleted by client
 	// 处理客户端删除的配置
 	if len(params.DelSettings) > 0 {
+		hasWritePermission := pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType, "config_w")
+
 		for _, delSetting := range params.DelSettings {
 
 			// Check if setting exists before deleting
@@ -222,15 +241,23 @@ func (h *SettingWSHandler) SettingSync(c *pkgapp.WebsocketClient, msg *pkgapp.We
 				Vault:    params.Vault,
 				PathHash: delSetting.PathHash,
 			}
-			checkSetting, err := h.App.SettingService.Get(ctx, c.User.UID, getCheckParams)
+			checkSetting, err := settingSvc.Get(ctx, c.User.UID, getCheckParams)
 
 			if err == nil && checkSetting != nil && checkSetting.Action != "delete" {
+				if !hasWritePermission {
+					h.App.Logger().Warn("websocket_router.setting.SettingSync: permission denied for deletion",
+						zap.String(logger.FieldTraceID, c.TraceID),
+						zap.Int64(logger.FieldUID, c.User.UID),
+						zap.String(logger.FieldPath, delSetting.Path))
+					continue
+				}
+
 				delParams := &dto.SettingDeleteRequest{
 					Vault:    params.Vault,
 					Path:     delSetting.Path,
 					PathHash: delSetting.PathHash,
 				}
-				setting, err := h.App.SettingService.Delete(ctx, c.User.UID, delParams)
+				setting, err := settingSvc.Delete(ctx, c.User.UID, delParams)
 				if err != nil {
 					h.App.Logger().Error("websocket_router.setting.SettingSync.SettingService.Delete",
 						zap.String(logger.FieldTraceID, c.TraceID),
@@ -278,7 +305,7 @@ func (h *SettingWSHandler) SettingSync(c *pkgapp.WebsocketClient, msg *pkgapp.We
 				Vault:    params.Vault,
 				PathHash: missingSetting.PathHash,
 			}
-			setting, err := h.App.SettingService.Get(ctx, c.User.UID, getParams)
+			setting, err := settingSvc.Get(ctx, c.User.UID, getParams)
 			if err != nil {
 				h.App.Logger().Warn("websocket_router.setting.SettingSync.SettingService.Get",
 					zap.String(logger.FieldTraceID, c.TraceID),
@@ -315,9 +342,6 @@ func (h *SettingWSHandler) SettingSync(c *pkgapp.WebsocketClient, msg *pkgapp.We
 			continue
 		}
 
-		if s.UpdatedTimestamp >= lastTime {
-			lastTime = s.UpdatedTimestamp
-		}
 		if s.Action == "delete" {
 			// Server already deleted, notify client to delete (regardless of whether client has it)
 			// 服务端已经删除，通知客户端删除（不再检查客户端是否存在）
@@ -431,18 +455,27 @@ func (h *SettingWSHandler) SettingSync(c *pkgapp.WebsocketClient, msg *pkgapp.We
 		}
 	}
 
-	if list == nil {
-		lastTime = timex.Now().UnixMilli()
-	}
+	// Use syncStartTime (recorded before query) as lastTime to prevent writes that occurred
+	// during query processing from being permanently missed on the next incremental sync.
+	// 使用查询前记录的 syncStartTime 作为 lastTime，防止查询处理期间的写入在下次增量同步时被永久遗漏。
+	lastTime = syncStartTime
+	hasWritePermission := pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType, "config_w")
 	for pathHash := range cSettingsKeys {
 		s := cSettings[pathHash]
 		// Add message to queue instead of sending immediately
 		// 将消息添加到队列而非立即发送
-		messageQueue = append(messageQueue, dto.WSQueuedMessage{
-			Action: dto.SettingSyncNeedUpload,
-			Data:   dto.SettingSyncNeedUploadMessage{Path: s.Path},
-		})
-		needUploadCount++
+		if hasWritePermission {
+			messageQueue = append(messageQueue, dto.WSQueuedMessage{
+				Action: dto.SettingSyncNeedUpload,
+				Data:   dto.SettingSyncNeedUploadMessage{Path: s.Path},
+			})
+			needUploadCount++
+		} else {
+			h.App.Logger().Warn("websocket_router.setting.SettingSync: permission denied for upload",
+				zap.String(logger.FieldTraceID, c.TraceID),
+				zap.Int64(logger.FieldUID, c.User.UID),
+				zap.String(logger.FieldPath, s.Path))
+		}
 	}
 
 	// Send SettingSyncEnd message
@@ -478,7 +511,7 @@ func (h *SettingWSHandler) SettingClear(c *pkgapp.WebsocketClient, msg *pkgapp.W
 
 	pkgapp.NoteModifyLog(c.TraceID, c.User.UID, "SettingClear", "", params.Vault)
 
-	err := h.App.SettingService.ClearByVault(ctx, c.User.UID, params.Vault)
+	err := h.App.GetSettingService(c.ClientType, c.ClientName, c.ClientVersion).ClearByVault(ctx, c.User.UID, params.Vault)
 	if err != nil {
 		h.respondError(c, code.ErrorSettingDeleteFailed, err, "websocket_router.setting.SettingClear.ClearByVault")
 		return
@@ -487,4 +520,50 @@ func (h *SettingWSHandler) SettingClear(c *pkgapp.WebsocketClient, msg *pkgapp.W
 	// Broadcast clearing to other clients with vault info
 	// 将清除消息广播给其他客户端，带上笔记本信息
 	c.BroadcastResponse(code.Success.WithData(nil).WithVault(params.Vault), false, dto.SettingSyncClear)
+}
+
+// SettingRePush handles setting missing pull request
+// SettingRePush 处理配置缺失请求拉取
+func (h *SettingWSHandler) SettingRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
+	params := &dto.SettingGetRequest{}
+	valid, errs := c.BindAndValid(msg.Data, params)
+	if !valid {
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.setting.SettingRePush.BindAndValid")
+		return
+	}
+
+	pkgapp.NoteModifyLog(c.TraceID, c.User.UID, "SettingRePush", params.Path, params.Vault)
+
+	ctx := c.Context()
+	h.App.VaultService.GetOrCreate(ctx, c.User.UID, params.Vault)
+
+	setting, err := h.App.GetSettingService(c.ClientType, c.ClientName, c.ClientVersion).Get(ctx, c.User.UID, params)
+	if err != nil {
+		h.App.Logger().Debug("websocket_router.setting.SettingRePush.Get: record not found or error, proceeding to send delete",
+			zap.String(logger.FieldTraceID, c.TraceID),
+			zap.Error(err))
+	}
+
+	if setting != nil && setting.Action != "delete" {
+		c.ToResponse(code.Success.WithData(
+			dto.SettingSyncModifyMessage{
+				Vault:            params.Vault,
+				Path:             setting.Path,
+				PathHash:         setting.PathHash,
+				Content:          setting.Content,
+				ContentHash:      setting.ContentHash,
+				Ctime:            setting.Ctime,
+				Mtime:            setting.Mtime,
+				UpdatedTimestamp: setting.UpdatedTimestamp,
+			},
+		).WithVault(params.Vault), dto.SettingSyncModify)
+	} else {
+		// If setting not found, send delete message to client to clean up local unauthorized creation
+		// 如果未找到配置，则向客户端发送删除消息，以清理本地未授权的创建
+		c.ToResponse(code.Success.WithData(
+			dto.SettingSyncDeleteMessage{
+				Path: params.Path,
+			},
+		).WithVault(params.Vault), string(dto.SettingSyncDelete))
+	}
 }

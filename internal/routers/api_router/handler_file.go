@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/haierkeys/fast-note-sync-service/internal/app"
 	"github.com/haierkeys/fast-note-sync-service/internal/dto"
 	"github.com/haierkeys/fast-note-sync-service/internal/middleware"
@@ -69,7 +71,7 @@ func (h *FileHandler) List(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	pager := pkgapp.NewPager(c)
-	fileSvc := h.App.GetFileService(app.WebClientName, "")
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
 	files, count, err := fileSvc.List(ctx, uid, params, pager)
 	if err != nil {
 		h.logError(ctx, "FileHandler.List", err)
@@ -118,7 +120,7 @@ func (h *FileHandler) GetInfo(c *gin.Context) {
 	// Get request context
 	ctx := c.Request.Context()
 
-	fileSvc := h.App.GetFileService(app.WebClientName, "")
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
 	savePath, contentType, mtime, etag, fileName, err := fileSvc.GetContentInfo(ctx, uid, params)
 	if err != nil {
 		h.logError(ctx, "FileHandler.GetContent", err)
@@ -198,7 +200,7 @@ func (h *FileHandler) Delete(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	fileSvc := h.App.GetFileService(app.WebClientName, "")
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
 	// Execute deletion
 	// 执行删除
 	file, err := fileSvc.Delete(ctx, uid, params)
@@ -263,7 +265,7 @@ func (h *FileHandler) Get(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	fileSvc := h.App.GetFileService(app.WebClientName, "")
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
 	file, err := fileSvc.Get(ctx, uid, params)
 	if err != nil {
 		h.logError(ctx, "FileHandler.Get", err)
@@ -321,7 +323,7 @@ func (h *FileHandler) Restore(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	fileSvc := h.App.GetFileService(app.WebClientName, "")
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
 
 	// Execute restore
 	// 执行恢复
@@ -375,7 +377,7 @@ func (h *FileHandler) RecycleClear(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	fileSvc := h.App.GetFileService(app.WebClientName, "")
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
 	if err := fileSvc.RecycleClear(ctx, uid, params); err != nil {
 		h.logError(ctx, "FileHandler.RecycleClear", err)
 		apperrors.ErrorResponse(c, err)
@@ -436,7 +438,7 @@ func (h *FileHandler) Rename(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	fileSvc := h.App.GetFileService(app.WebClientName, "")
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
 
 	oldFile, newFile, err := fileSvc.Rename(ctx, uid, params)
 	if err != nil {
@@ -460,4 +462,125 @@ func (h *FileHandler) Rename(c *gin.Context) {
 		OldPath:          oldFile.Path,
 		OldPathHash:      oldFile.PathHash,
 	}).WithVault(params.Vault), "FileSyncRename")
+}
+
+// Upload uploads a file
+// @Summary Upload attachment
+// @Description Upload a file as an attachment
+// @Tags File
+// @Security UserAuthToken
+// @Param token header string true "Auth Token"
+// @Accept multipart/form-data
+// @Produce json
+// @Param vault formData string true "Vault name"
+// @Param path formData string true "File path"
+// @Param ctime formData int64 false "Creation timestamp"
+// @Param mtime formData int64 false "Modification timestamp"
+// @Param file formData file true "File to upload"
+// @Success 200 {object} pkgapp.Res{data=dto.FileDTO} "Success"
+// @Router /api/file [post]
+func (h *FileHandler) Upload(c *gin.Context) {
+	response := pkgapp.NewResponse(c)
+	input := &dto.FileUploadRequest{}
+
+	// Parameter binding and validation
+	// 参数绑定和验证
+	valid, errs := pkgapp.BindAndValid(c, input)
+	if !valid {
+		h.App.Logger().Error("FileHandler.Upload.BindAndValid err", zap.Error(errs))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		return
+	}
+
+	// Get UID
+	// 获取用户 ID
+	uid := pkgapp.GetUID(c)
+	if uid == 0 {
+		h.App.Logger().Error("FileHandler.Upload err uid=0")
+		response.ToResponse(code.ErrorInvalidUserAuthToken)
+		return
+	}
+
+	// Calculate PathHash
+	if input.PathHash == "" {
+		input.PathHash = util.EncodeHash32(input.Path)
+	}
+
+	// Get file from form
+	file, err := c.FormFile("file")
+	if err != nil {
+		response.ToResponse(code.ErrorInvalidParams.WithDetails("file is required"))
+		return
+	}
+
+	// Default timestamps if not provided
+	ctime := input.Ctime
+	mtime := input.Mtime
+	if ctime == 0 {
+		ctime = time.Now().UnixMilli()
+	}
+	if mtime == 0 {
+		mtime = time.Now().UnixMilli()
+	}
+
+	// Create temp path
+	tempDir := h.App.Config().App.TempPath
+	if tempDir == "" {
+		tempDir = "storage/temp"
+	}
+	_ = os.MkdirAll(tempDir, 0755)
+	tempPath := filepath.Join(tempDir, uuid.New().String())
+
+	// Save uploaded file to temp path
+	if err := c.SaveUploadedFile(file, tempPath); err != nil {
+		h.logError(c.Request.Context(), "FileHandler.Upload.SaveUploadedFile", err)
+		response.ToResponse(code.Failed.WithDetails("failed to save temp file"))
+		return
+	}
+	defer os.Remove(tempPath) // Clean up temp file
+
+	// Read file to calculate hash
+	data, err := os.ReadFile(tempPath)
+	if err != nil {
+		h.logError(c.Request.Context(), "FileHandler.Upload.ReadFile", err)
+		response.ToResponse(code.Failed.WithDetails("failed to read temp file"))
+		return
+	}
+
+	// Map to internal Service DTO
+	params := &dto.FileUpdateRequest{
+		Vault:       input.Vault,
+		Path:        input.Path,
+		PathHash:    input.PathHash,
+		ContentHash: util.EncodeHash32Bytes(data),
+		SavePath:    tempPath,
+		Size:        file.Size,
+		Ctime:       ctime,
+		Mtime:       mtime,
+	}
+
+	ctx := c.Request.Context()
+	fileSvc := h.App.GetFileService(h.getClientInfo(c))
+	_, fileDTO, err := fileSvc.UpdateOrCreate(ctx, uid, params, false)
+	if err != nil {
+		h.logError(ctx, "FileHandler.Upload.UpdateOrCreate", err)
+		apperrors.ErrorResponse(c, err)
+		return
+	}
+
+	response.ToResponse(code.Success.WithData(fileDTO))
+
+	// Broadcast WebSocket event: FileSyncUpdate
+	// 广播 WebSocket 事件: 文件同步更新
+	h.WSS.BroadcastToUser(uid, code.Success.WithData(
+		dto.FileSyncModifyMessage{
+			Path:             fileDTO.Path,
+			PathHash:         fileDTO.PathHash,
+			ContentHash:      fileDTO.ContentHash,
+			Size:             fileDTO.Size,
+			Ctime:            fileDTO.Ctime,
+			Mtime:            fileDTO.Mtime,
+			UpdatedTimestamp: fileDTO.UpdatedTimestamp,
+		},
+	).WithVault(input.Vault), "FileSyncUpdate")
 }

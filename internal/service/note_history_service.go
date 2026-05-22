@@ -116,16 +116,18 @@ func (s *noteHistoryService) domainToDTO(history *domain.NoteHistory) *dto.NoteH
 	diffResults := dmp.DiffMain(content, restoredNewVersion, false)
 
 	return &dto.NoteHistoryDTO{
-		ID:          history.ID,
-		NoteID:      history.NoteID,
-		VaultID:     history.VaultID,
-		Path:        history.Path,
-		Diffs:       diffResults,
-		Content:     history.Content,
-		ContentHash: history.ContentHash,
-		ClientName:  history.ClientName,
-		Version:     history.Version,
-		CreatedAt:   timex.Time(history.CreatedAt),
+		ID:            history.ID,
+		NoteID:        history.NoteID,
+		VaultID:       history.VaultID,
+		Path:          history.Path,
+		Diffs:         diffResults,
+		Content:       history.Content,
+		ContentHash:   history.ContentHash,
+		ClientName:    history.ClientName,
+		ClientType:    history.ClientType,
+		ClientVersion: history.ClientVersion,
+		Version:       history.Version,
+		CreatedAt:     timex.Time(history.CreatedAt),
 	}
 }
 
@@ -136,13 +138,15 @@ func (s *noteHistoryService) domainToNoContentDTO(history *domain.NoteHistory) *
 		return nil
 	}
 	return &dto.NoteHistoryNoContentDTO{
-		ID:         history.ID,
-		NoteID:     history.NoteID,
-		VaultID:    history.VaultID,
-		Path:       history.Path,
-		ClientName: history.ClientName,
-		Version:    history.Version,
-		CreatedAt:  timex.Time(history.CreatedAt),
+		ID:            history.ID,
+		NoteID:        history.NoteID,
+		VaultID:       history.VaultID,
+		Path:          history.Path,
+		ClientName:    history.ClientName,
+		ClientType:    history.ClientType,
+		ClientVersion: history.ClientVersion,
+		Version:       history.Version,
+		CreatedAt:     timex.Time(history.CreatedAt),
 	}
 }
 
@@ -263,15 +267,17 @@ func (s *noteHistoryService) ProcessDelay(ctx context.Context, noteID int64, uid
 	}
 
 	history := &domain.NoteHistory{
-		NoteID:      note.ID,
-		VaultID:     note.VaultID,
-		Path:        note.Path,
-		DiffPatch:   patchText,
-		Content:     note.ContentLastSnapshot,
-		ContentHash: note.ContentLastSnapshotHash,
-		ClientName:  note.ClientName,
-		Version:     latestVersion + 1,
-		CreatedAt:   note.UpdatedAt,
+		NoteID:        note.ID,
+		VaultID:       note.VaultID,
+		Path:          note.Path,
+		DiffPatch:     patchText,
+		Content:       note.ContentLastSnapshot,
+		ContentHash:   note.ContentLastSnapshotHash,
+		ClientName:    note.ClientName,
+		ClientType:    note.ClientType,
+		ClientVersion: note.ClientVersion,
+		Version:       latestVersion + 1,
+		CreatedAt:     note.UpdatedAt,
 	}
 
 	_, err = s.historyRepo.Create(ctx, history, uid)
@@ -432,6 +438,7 @@ func (s *noteHistoryService) CleanupByTime(ctx context.Context, cutoffTime int64
 
 	var totalCleaned int64
 	for i, uid := range uids {
+		// Add staggered delay to avoid triggering a large number of write transactions at once
 		// 增加错峰延迟，避免瞬间触发大量写事务
 		if i > 0 {
 			time.Sleep(500 * time.Millisecond)

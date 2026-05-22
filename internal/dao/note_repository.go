@@ -1,3 +1,4 @@
+// Package dao implements the data access layer
 // Package dao 实现数据访问层
 package dao
 
@@ -19,12 +20,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// noteRepository implements domain.NoteRepository interface
 // noteRepository 实现 domain.NoteRepository 接口
 type noteRepository struct {
 	dao             *Dao
 	customPrefixKey string
 }
 
+// NewNoteRepository creates NoteRepository instance
 // NewNoteRepository 创建 NoteRepository 实例
 func NewNoteRepository(dao *Dao) domain.NoteRepository {
 	return &noteRepository{dao: dao, customPrefixKey: "user_"}
@@ -47,11 +50,13 @@ func init() {
 func (r *noteRepository) note(uid int64) *query.Query {
 	return r.dao.QueryWithOnceInit(func(g *gorm.DB) {
 		model.AutoMigrate(g, "Note")
+		// Initialize universal full-text search table
 		// 初始化通用全文搜索表
 		_ = model.CreateNoteFTSTable(g)
 	}, r.GetKey(uid)+"#note_v3", r.GetKey(uid))
 }
 
+// ListByIDs retrieves note list by ID list
 // ListByIDs 根据ID列表获取笔记列表
 func (r *noteRepository) ListByIDs(ctx context.Context, ids []int64, uid int64) ([]*domain.Note, error) {
 	if len(ids) == 0 {
@@ -73,27 +78,32 @@ func (r *noteRepository) ListByIDs(ctx context.Context, ids []int64, uid int64) 
 	return res, nil
 }
 
+// EnsureFTSIndex ensures FTS index exists (public method, can be called manually)
 // EnsureFTSIndex 确保 FTS 索引存在（公开方法，可手动调用）
 func (r *noteRepository) EnsureFTSIndex(ctx context.Context, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
 		key := r.GetKey(uid)
 		ftsKey := key + "#fts_indexed"
 
+		// Use onceKeys to ensure each user is checked only once
 		// 使用 onceKeys 确保每个用户只检查一次
 		if _, loaded := r.dao.onceKeys.LoadOrStore(ftsKey, true); loaded {
-			return nil // 已检查过
+			return nil // Already checked // 已检查过
 		}
 
+		// Ensure FTS table exists (automatically checks version and rebuilds)
 		// 确保 FTS 表存在（会自动检查版本并重建）
 		_ = model.CreateNoteFTSTable(db)
 
+		// Check if FTS index is empty
 		// 检查 FTS 索引是否为空
 		var ftsCount int64
 		db.Model(&model.NoteFTSToken{}).Count(&ftsCount)
 		if ftsCount > 0 {
-			return nil // 已有索引
+			return nil // Index already exists // 已有索引
 		}
 
+		// Check if any notes need indexing
 		// 检查是否有笔记需要索引
 		var noteCount int64
 		db.Model(&model.Note{}).Where("action != ?", "delete").Count(&noteCount)
@@ -101,6 +111,7 @@ func (r *noteRepository) EnsureFTSIndex(ctx context.Context, uid int64) error {
 			return nil
 		}
 
+		// Synchronously rebuild index
 		// 同步重建索引
 		var notes []model.Note
 		if err := db.Where("action != ?", "delete").Find(&notes).Error; err != nil {
@@ -123,6 +134,7 @@ func (r *noteRepository) EnsureFTSIndex(ctx context.Context, uid int64) error {
 	})
 }
 
+// toDomain converts DAO Note to domain model
 // toDomain 将 DAO Note 转换为领域模型
 func (r *noteRepository) toDomain(m *model.Note, uid int64) (*domain.Note, error) {
 	if m == nil {
@@ -142,6 +154,8 @@ func (r *noteRepository) toDomain(m *model.Note, uid int64) (*domain.Note, error
 		ContentLastSnapshotHash: m.ContentLastSnapshotHash,
 		Version:                 m.Version,
 		ClientName:              m.ClientName,
+		ClientType:              m.ClientType,
+		ClientVersion:           m.ClientVersion,
 		Size:                    m.Size,
 		Ctime:                   m.Ctime,
 		Mtime:                   m.Mtime,
@@ -155,6 +169,7 @@ func (r *noteRepository) toDomain(m *model.Note, uid int64) (*domain.Note, error
 	return note, nil
 }
 
+// toModel converts domain model to database model
 // toModel 将领域模型转换为数据库模型
 func (r *noteRepository) toModel(note *domain.Note) *model.Note {
 	if note == nil {
@@ -174,6 +189,8 @@ func (r *noteRepository) toModel(note *domain.Note) *model.Note {
 		ContentLastSnapshotHash: note.ContentLastSnapshotHash,
 		Version:                 note.Version,
 		ClientName:              note.ClientName,
+		ClientType:              note.ClientType,
+		ClientVersion:           note.ClientVersion,
 		Size:                    note.Size,
 		Ctime:                   note.Ctime,
 		Mtime:                   note.Mtime,
@@ -183,6 +200,7 @@ func (r *noteRepository) toModel(note *domain.Note) *model.Note {
 	}
 }
 
+// fillNoteContent fills note content
 // fillNoteContent 填充笔记内容
 func (r *noteRepository) fillNoteContent(uid int64, n *domain.Note) error {
 	if n == nil {
@@ -190,6 +208,7 @@ func (r *noteRepository) fillNoteContent(uid int64, n *domain.Note) error {
 	}
 	folder := r.dao.GetNoteFolderPath(uid, n.ID)
 
+	// Load content
 	// 加载内容
 	content, exists, err := r.dao.LoadContentFromFile(folder, "content.txt")
 	if err != nil {
@@ -198,6 +217,7 @@ func (r *noteRepository) fillNoteContent(uid int64, n *domain.Note) error {
 	if exists {
 		n.Content = content
 	} else if n.Content != "" {
+		// Lazy migration failed, log warning but do not block flow
 		// 懒迁移失败记录警告日志但不阻断流程
 		if err := r.dao.SaveContentToFile(folder, "content.txt", n.Content); err != nil {
 			r.dao.Logger().Warn("lazy migration: SaveContentToFile failed for note content",
@@ -208,10 +228,12 @@ func (r *noteRepository) fillNoteContent(uid int64, n *domain.Note) error {
 			)
 		}
 	} else {
+		// File does not exist and no content to migrate, return error to prevent data loss (treated as read failure)
 		// 文件不存在且没有可迁移的内容，返回错误以防止数据丢失（视为读取失败）
 		return fmt.Errorf("note content file not found: %w", os.ErrNotExist)
 	}
 
+	// Load snapshot
 	// 加载快照
 	snapshot, exists, err := r.dao.LoadContentFromFile(folder, "snapshot.txt")
 	if err != nil {
@@ -220,6 +242,7 @@ func (r *noteRepository) fillNoteContent(uid int64, n *domain.Note) error {
 	if exists {
 		n.ContentLastSnapshot = snapshot
 	} else if n.ContentLastSnapshot != "" {
+		// Lazy migration failed, log warning but do not block flow
 		// 懒迁移失败记录警告日志但不阻断流程
 		if err := r.dao.SaveContentToFile(folder, "snapshot.txt", n.ContentLastSnapshot); err != nil {
 			r.dao.Logger().Warn("lazy migration: SaveContentToFile failed for note snapshot",
@@ -234,6 +257,7 @@ func (r *noteRepository) fillNoteContent(uid int64, n *domain.Note) error {
 	return nil
 }
 
+// GetByID retrieves note by ID
 // GetByID 根据ID获取笔记
 func (r *noteRepository) GetByID(ctx context.Context, id, uid int64) (*domain.Note, error) {
 	u := r.note(uid).Note
@@ -244,6 +268,7 @@ func (r *noteRepository) GetByID(ctx context.Context, id, uid int64) (*domain.No
 	return r.toDomain(m, uid)
 }
 
+// GetByPathHash retrieves note by path hash (excluding deleted)
 // GetByPathHash 根据路径哈希获取笔记（排除已删除）
 func (r *noteRepository) GetByPathHash(ctx context.Context, pathHash string, vaultID, uid int64) (*domain.Note, error) {
 	u := r.note(uid).Note
@@ -258,6 +283,7 @@ func (r *noteRepository) GetByPathHash(ctx context.Context, pathHash string, vau
 	return r.toDomain(m, uid)
 }
 
+// GetByPathHashIncludeRecycle retrieves note by path hash (optionally including recycle bin)
 // GetByPathHashIncludeRecycle 根据路径哈希获取笔记（可选包含回收站）
 func (r *noteRepository) GetByPathHashIncludeRecycle(ctx context.Context, pathHash string, vaultID, uid int64, isRecycle bool) (*domain.Note, error) {
 	u := r.note(uid).Note
@@ -279,6 +305,7 @@ func (r *noteRepository) GetByPathHashIncludeRecycle(ctx context.Context, pathHa
 	return r.toDomain(m, uid)
 }
 
+// GetAllByPathHash retrieves note by path hash (including all statuses)
 // GetAllByPathHash 根据路径哈希获取笔记（包含所有状态）
 func (r *noteRepository) GetAllByPathHash(ctx context.Context, pathHash string, vaultID, uid int64) (*domain.Note, error) {
 	u := r.note(uid).Note
@@ -292,6 +319,29 @@ func (r *noteRepository) GetAllByPathHash(ctx context.Context, pathHash string, 
 	return r.toDomain(m, uid)
 }
 
+// ListByPathHash retrieves note list by path hash (handling duplicate records)
+// ListByPathHash 根据路径哈希获取笔记列表（处理重复记录）
+func (r *noteRepository) ListByPathHash(ctx context.Context, pathHash string, vaultID, uid int64) ([]*domain.Note, error) {
+	u := r.note(uid).Note
+	ms, err := u.WithContext(ctx).Where(
+		u.VaultID.Eq(vaultID),
+		u.PathHash.Eq(pathHash),
+	).Find()
+	if err != nil {
+		return nil, err
+	}
+	var res []*domain.Note
+	for _, m := range ms {
+		note, err := r.toDomain(m, uid)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, note)
+	}
+	return res, nil
+}
+
+// GetByPath retrieves note by path
 // GetByPath 根据路径获取笔记
 func (r *noteRepository) GetByPath(ctx context.Context, path string, vaultID, uid int64) (*domain.Note, error) {
 	u := r.note(uid).Note
@@ -305,6 +355,7 @@ func (r *noteRepository) GetByPath(ctx context.Context, path string, vaultID, ui
 	return r.toDomain(m, uid)
 }
 
+// Create creates a note
 // Create 创建笔记
 func (r *noteRepository) Create(ctx context.Context, note *domain.Note, uid int64) (*domain.Note, error) {
 	var result *domain.Note
@@ -319,14 +370,15 @@ func (r *noteRepository) Create(ctx context.Context, note *domain.Note, uid int6
 		m.UpdatedAt = timex.Now()
 
 		content := m.Content
-		m.Content = ""             // 不在数据库存储内容
-		m.ContentLastSnapshot = "" // 不在数据库存储快照
+		m.Content = ""             // Do not store content in database // 不在数据库存储内容
+		m.ContentLastSnapshot = "" // Do not store snapshot in database // 不在数据库存储快照
 
 		createErr = u.WithContext(ctx).Create(m)
 		if createErr != nil {
 			return createErr
 		}
 
+		// Save content to file
 		// 保存内容到文件
 		folder := r.dao.GetNoteFolderPath(uid, m.ID)
 		if err := r.dao.SaveContentToFile(folder, "content.txt", content); err != nil {
@@ -352,6 +404,7 @@ func (r *noteRepository) Create(ctx context.Context, note *domain.Note, uid int6
 	return result, createErr
 }
 
+// Update updates a note
 // Update 更新笔记
 func (r *noteRepository) Update(ctx context.Context, note *domain.Note, uid int64) (*domain.Note, error) {
 	var result *domain.Note
@@ -365,7 +418,7 @@ func (r *noteRepository) Update(ctx context.Context, note *domain.Note, uid int6
 		m.UpdatedAt = timex.Now()
 
 		content := m.Content
-		m.Content = "" // 不在数据库更新内容
+		m.Content = "" // Do not update content in database // 不在数据库更新内容
 
 		updateErr = u.WithContext(ctx).Where(
 			u.ID.Eq(m.ID),
@@ -379,6 +432,8 @@ func (r *noteRepository) Update(ctx context.Context, note *domain.Note, uid int6
 			u.Content,
 			u.ContentHash,
 			u.ClientName,
+			u.ClientType,
+			u.ClientVersion,
 			u.Size,
 			u.Ctime,
 			u.Mtime,
@@ -392,6 +447,7 @@ func (r *noteRepository) Update(ctx context.Context, note *domain.Note, uid int6
 			return updateErr
 		}
 
+		// Save content to file
 		// 保存内容到文件
 		folder := r.dao.GetNoteFolderPath(uid, m.ID)
 		if err := r.dao.SaveContentToFile(folder, "content.txt", content); err != nil {
@@ -417,6 +473,7 @@ func (r *noteRepository) Update(ctx context.Context, note *domain.Note, uid int6
 	return result, updateErr
 }
 
+// UpdateDelete updates note to deleted status
 // UpdateDelete 更新笔记为删除状态
 func (r *noteRepository) UpdateDelete(ctx context.Context, note *domain.Note, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -426,6 +483,8 @@ func (r *noteRepository) UpdateDelete(ctx context.Context, note *domain.Note, ui
 			Action:           string(note.Action),
 			Rename:           note.Rename,
 			ClientName:       note.ClientName,
+			ClientType:       note.ClientType,
+			ClientVersion:    note.ClientVersion,
 			Mtime:            note.Mtime,
 			UpdatedTimestamp: timex.Now().UnixMilli(),
 		}
@@ -437,12 +496,15 @@ func (r *noteRepository) UpdateDelete(ctx context.Context, note *domain.Note, ui
 			u.Action,
 			u.Rename,
 			u.ClientName,
+			u.ClientType,
+			u.ClientVersion,
 			u.Mtime,
 			u.UpdatedTimestamp,
 		).Save(m)
 	})
 }
 
+// UpdateMtime updates note modification time
 // UpdateMtime 更新笔记修改时间
 func (r *noteRepository) UpdateMtime(ctx context.Context, mtime int64, id, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -459,6 +521,7 @@ func (r *noteRepository) UpdateMtime(ctx context.Context, mtime int64, id, uid i
 	})
 }
 
+// UpdateActionMtime updates note modification time
 // UpdateActionMtime 更新笔记修改时间
 func (r *noteRepository) UpdateActionMtime(ctx context.Context, action domain.NoteAction, mtime int64, id, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -476,6 +539,7 @@ func (r *noteRepository) UpdateActionMtime(ctx context.Context, action domain.No
 	})
 }
 
+// UpdateSnapshot updates note snapshot
 // UpdateSnapshot 更新笔记快照
 func (r *noteRepository) UpdateSnapshot(ctx context.Context, snapshot, snapshotHash string, version, id, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -496,6 +560,7 @@ func (r *noteRepository) UpdateSnapshot(ctx context.Context, snapshot, snapshotH
 	})
 }
 
+// Delete physically deletes a note
 // Delete 物理删除笔记
 func (r *noteRepository) Delete(ctx context.Context, id, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -505,6 +570,7 @@ func (r *noteRepository) Delete(ctx context.Context, id, uid int64) error {
 			return err
 		}
 
+		// Delete physical files
 		// 删除物理文件
 		folder := r.dao.GetNoteFolderPath(uid, id)
 		_ = r.dao.RemoveContentFolder(folder)
@@ -513,6 +579,7 @@ func (r *noteRepository) Delete(ctx context.Context, id, uid int64) error {
 	})
 }
 
+// DeletePhysicalByTime physically deletes notes marked as deleted by time
 // DeletePhysicalByTime 根据时间物理删除已标记删除的笔记
 func (r *noteRepository) DeletePhysicalByTime(ctx context.Context, timestamp, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -539,14 +606,17 @@ func (r *noteRepository) DeletePhysicalByTime(ctx context.Context, timestamp, ui
 	})
 }
 
+// DeletePhysicalByTimeAll physically deletes notes marked as deleted for all users by time
 // DeletePhysicalByTimeAll 根据时间物理删除所有用户的已标记删除的笔记
 func (r *noteRepository) DeletePhysicalByTimeAll(ctx context.Context, timestamp int64) error {
+	// Get all user UIDs
 	// 获取所有用户 UID
 	uids, err := r.dao.GetAllUserUIDs()
 	if err != nil {
 		return err
 	}
 
+	// Execute cleanup user by user
 	// 逐用户执行清理
 	for i, uid := range uids {
 		// 增加错峰延迟，避免瞬间触发大量写事务
@@ -561,6 +631,7 @@ func (r *noteRepository) DeletePhysicalByTimeAll(ctx context.Context, timestamp 
 	return nil
 }
 
+// List retrieves note list by page
 // List 分页获取笔记列表
 func (r *noteRepository) List(ctx context.Context, vaultID int64, page, pageSize int, uid int64, keyword string, isRecycle bool, searchMode string, searchContent bool, sortBy string, sortOrder string, paths []string) ([]*domain.Note, error) {
 	u := r.note(uid).Note
@@ -642,6 +713,7 @@ func (r *noteRepository) List(ctx context.Context, vaultID int64, page, pageSize
 
 func (r *noteRepository) ListByPathPrefix(ctx context.Context, pathPrefix string, vaultID, uid int64) ([]*domain.Note, error) {
 	u := r.note(uid).Note
+	// Use LIKE 'prefix/%'
 	// 使用 LIKE 'prefix/%'
 	pattern := pathPrefix + "/%"
 	ms, err := u.WithContext(ctx).Where(
@@ -663,6 +735,7 @@ func (r *noteRepository) ListByPathPrefix(ctx context.Context, pathPrefix string
 	return res, nil
 }
 
+// getSortField maps sort fields
 // getSortField 映射排序字段
 func getSortField(sortBy string) string {
 	switch sortBy {
@@ -675,6 +748,7 @@ func getSortField(sortBy string) string {
 	}
 }
 
+// buildOrderClause builds order clause
 // buildOrderClause 构建排序语句
 func buildOrderClause(sortBy, sortOrder string) string {
 	// 默认值
@@ -690,6 +764,7 @@ func buildOrderClause(sortBy, sortOrder string) string {
 	return getSortField(sortBy) + " " + sortOrder
 }
 
+// ListCount retrieves note count
 // ListCount 获取笔记数量
 func (r *noteRepository) ListCount(ctx context.Context, vaultID, uid int64, keyword string, isRecycle bool, searchMode string, searchContent bool, paths []string) (int64, error) {
 	u := r.note(uid).Note
@@ -731,11 +806,13 @@ func (r *noteRepository) ListCount(ctx context.Context, vaultID, uid int64, keyw
 	return count, nil
 }
 
+// ListByUpdatedTimestamp retrieves note list by updated timestamp
 // ListByUpdatedTimestamp 根据更新时间戳获取笔记列表
 func (r *noteRepository) ListByUpdatedTimestamp(ctx context.Context, timestamp, vaultID, uid int64) ([]*domain.Note, error) {
 	return r.ListByUpdatedTimestampPage(ctx, timestamp, vaultID, uid, 0, 0)
 }
 
+// ListByUpdatedTimestampPage retrieves note list by updated timestamp by page
 // ListByUpdatedTimestampPage 根据更新时间戳分页获取笔记列表
 func (r *noteRepository) ListByUpdatedTimestampPage(ctx context.Context, timestamp, vaultID, uid int64, offset, limit int) ([]*domain.Note, error) {
 	u := r.note(uid).Note
@@ -768,6 +845,7 @@ func (r *noteRepository) ListByUpdatedTimestampPage(ctx context.Context, timesta
 	return list, nil
 }
 
+// ListContentUnchanged retrieves note list with unchanged content
 // ListContentUnchanged 获取内容未变更的笔记列表
 func (r *noteRepository) ListContentUnchanged(ctx context.Context, uid int64) ([]*domain.Note, error) {
 	u := r.note(uid).Note
@@ -1028,3 +1106,44 @@ func (r *noteRepository) searchFTSCount(db *gorm.DB, keyword string, vaultID int
 	err := db.Table("(?) AS sub", subQuery).Count(&count).Error
 	return count, err
 }
+
+// DeleteByVaultID physically deletes all notes in a vault
+// DeleteByVaultID 物理删除仓库下的所有笔记
+func (r *noteRepository) DeleteByVaultID(ctx context.Context, vaultID, uid int64) error {
+	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
+		u := r.note(uid).Note
+
+		// 查找该仓库下的所有笔记 ID
+		notes, err := u.WithContext(ctx).Where(u.VaultID.Eq(vaultID)).Select(u.ID).Find()
+		if err != nil {
+			return err
+		}
+
+		if len(notes) == 0 {
+			return nil
+		}
+
+		var ids []int64
+		for _, n := range notes {
+			ids = append(ids, n.ID)
+		}
+
+		// 从数据库删除
+		_, err = u.WithContext(ctx).Where(u.VaultID.Eq(vaultID)).Delete()
+		if err != nil {
+			return err
+		}
+
+		// 删除物理文件夹
+		for _, id := range ids {
+			folder := r.dao.GetNoteFolderPath(uid, id)
+			_ = r.dao.RemoveContentFolder(folder)
+		}
+
+		return nil
+	})
+}
+
+// Ensure noteRepository implements domain.NoteRepository interface
+// 确保 noteRepository 实现了 domain.NoteRepository 接口
+var _ domain.NoteRepository = (*noteRepository)(nil)

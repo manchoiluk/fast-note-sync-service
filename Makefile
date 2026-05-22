@@ -28,7 +28,10 @@ GitVersionDesc  = $(shell git log -1 --format=%s)
 BuildTime       = $(shell date +%FT%T%z)
 
 # LDFLAGS: 注入版本信息到二进制
-LDFLAGS = -ldflags '-X ${REPO}/internal/app.Version=$(GitTag) -X "${REPO}/internal/app.GitTag=$(GitVersion)" -X ${REPO}/internal/app.BuildTime=$(BuildTime)'
+# 获取提交信息，并处理掉换行符（用 @@@ 占位）以便安全地注入到 ldflags
+COMMIT_MSG_CLEAN = $(shell echo "$(COMMIT_MSG)" | tr '\n' '^' | sed 's/\^/@@@/g' | sed 's/"/\\"/g')
+Changelog       ?= $(COMMIT_MSG_CLEAN)
+LDFLAGS = -ldflags '-X ${REPO}/internal/app.Version=$(GitTag) -X "${REPO}/internal/app.GitTag=$(GitVersion)" -X ${REPO}/internal/app.BuildTime=$(BuildTime) -X "${REPO}/internal/app.Changelog=$(Changelog)"'
 
 # go 命令封装
 gob = go build ${LDFLAGS}
@@ -46,7 +49,7 @@ buildDir = $(rootDir)/build
 .PHONY: all  build-all run test clean \
         push-online push-dev \
         build-macos-amd64 build-macos-arm64 build-linux-amd64 \
-        build-linux-arm64 build-windows-amd64 gox-linux gox-all \
+        build-linux-arm64 build-linux-arm build-windows-amd64 gox-linux gox-all \
 		docs fmt update air dev ver gen sup
 
 # 默认目标
@@ -57,13 +60,11 @@ all: test build-all
 # -------------------------
 sup:
 	node scripts/process_support_csv.js
-	python3 scripts/process_support.py
-	node scripts/gen_support_md.js
+	node scripts/process_support.mjs --model Qwen/Qwen3.6-35B-A3B
 
 sup-md:
-	node scripts/gen_support_md.js
 test:
-	@echo ${REPO}
+	go test $$(go list ./... | grep -v -E 'internal/service/mocks|internal/domain/mocks|internal/dto|internal/model|internal/query|internal/config|internal/app|/docs|internal/middleware|cmd')
 
 dev:
 	air -c ./scripts/.air.toml
@@ -86,7 +87,7 @@ ver:
 	@:
 
 gen:
-	go run -v ./cmd/gorm_gen/gen.go -type sqlite -dsn storage/database/db.sqlite3
+	go run -v ./cmd/gorm_gen/gen.go -type sqlite -dsn storage/database/db_full.sqlite3
 	go run -v ./cmd/model_gen/gen.go
 
 docs:
@@ -110,6 +111,7 @@ build-all:
 	$(MAKE) build-macos-arm64
 	$(MAKE) build-linux-amd64
 	$(MAKE) build-linux-arm64
+	$(MAKE) build-linux-arm
 	$(MAKE) build-windows-amd64
 
 # macOS
@@ -127,6 +129,9 @@ build-linux-amd64:
 build-linux-arm64:
 	$(CGO) GOOS=linux GOARCH=arm64 $(gob) -o $(buildDir)/linux_arm64/${P_BIN} -v $(rootDir)
 
+build-linux-arm:
+	$(CGO) GOOS=linux GOARCH=arm GOARM=7 $(gob) -o $(buildDir)/linux_arm/${P_BIN} -v $(rootDir)
+
 # Windows
 build-windows-amd64:
 # CGO_ENABLED=0 CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC="x86_64-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" $(gob) -o $(bin).exe -v $(rootDir)
@@ -134,10 +139,10 @@ build-windows-amd64:
 
 # gox 辅助
 gox-linux:
-	$(CGO) gox ${LDFLAGS} -osarch="linux/amd64 linux/arm64" -output="$(buildDir)/{{.OS}}_{{.Arch}}/${P_BIN}"
+	$(CGO) GOARM=7 gox ${LDFLAGS} -osarch="linux/amd64 linux/arm64 linux/arm" -output="$(buildDir)/{{.OS}}_{{.Arch}}/${P_BIN}"
 
 gox-all:
-	$(CGO) gox ${LDFLAGS} -osarch="darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64" -output="$(buildDir)/{{.OS}}_{{.Arch}}/${P_BIN}"
+	$(CGO) GOARM=7 gox ${LDFLAGS} -osarch="darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 linux/arm windows/amd64" -output="$(buildDir)/{{.OS}}_{{.Arch}}/${P_BIN}"
 
 
 # -------------------------

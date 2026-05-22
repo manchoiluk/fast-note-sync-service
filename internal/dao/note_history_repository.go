@@ -1,3 +1,4 @@
+// Package dao implements the data access layer
 // Package dao 实现数据访问层
 package dao
 
@@ -18,12 +19,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// noteHistoryRepository implements domain.NoteHistoryRepository interface
 // noteHistoryRepository 实现 domain.NoteHistoryRepository 接口
 type noteHistoryRepository struct {
 	dao             *Dao
 	customPrefixKey string
 }
 
+// NewNoteHistoryRepository creates NoteHistoryRepository instance
 // NewNoteHistoryRepository 创建 NoteHistoryRepository 实例
 func NewNoteHistoryRepository(dao *Dao) domain.NoteHistoryRepository {
 	return &noteHistoryRepository{dao: dao, customPrefixKey: "user_note_history_"}
@@ -42,6 +45,7 @@ func init() {
 	})
 }
 
+// noteHistory gets the note history query object
 // noteHistory 获取笔记历史查询对象
 func (r *noteHistoryRepository) noteHistory(uid int64) *query.Query {
 	return r.dao.QueryWithOnceInit(func(g *gorm.DB) {
@@ -49,23 +53,26 @@ func (r *noteHistoryRepository) noteHistory(uid int64) *query.Query {
 	}, r.GetKey(uid)+"#noteHistory", r.GetKey(uid))
 }
 
+// toDomain converts database model to domain model
 // toDomain 将数据库模型转换为领域模型
 func (r *noteHistoryRepository) toDomain(m *model.NoteHistory, uid int64) (*domain.NoteHistory, error) {
 	if m == nil {
 		return nil, nil
 	}
 	h := &domain.NoteHistory{
-		ID:          m.ID,
-		NoteID:      m.NoteID,
-		VaultID:     m.VaultID,
-		Path:        m.Path,
-		DiffPatch:   m.DiffPatch,
-		Content:     m.Content,
-		ContentHash: m.ContentHash,
-		ClientName:  m.ClientName,
-		Version:     m.Version,
-		CreatedAt:   time.Time(m.CreatedAt),
-		UpdatedAt:   time.Time(m.UpdatedAt),
+		ID:            m.ID,
+		NoteID:        m.NoteID,
+		VaultID:       m.VaultID,
+		Path:          m.Path,
+		DiffPatch:     m.DiffPatch,
+		Content:       m.Content,
+		ContentHash:   m.ContentHash,
+		ClientName:    m.ClientName,
+		ClientType:    m.ClientType,
+		ClientVersion: m.ClientVersion,
+		Version:       m.Version,
+		CreatedAt:     time.Time(m.CreatedAt),
+		UpdatedAt:     time.Time(m.UpdatedAt),
 	}
 	if err := r.fillHistoryContent(uid, h); err != nil {
 		return nil, err
@@ -73,6 +80,7 @@ func (r *noteHistoryRepository) toDomain(m *model.NoteHistory, uid int64) (*doma
 	return h, nil
 }
 
+// fillHistoryContent fills history record content and patch
 // fillHistoryContent 填充历史记录内容及补丁
 func (r *noteHistoryRepository) fillHistoryContent(uid int64, h *domain.NoteHistory) error {
 	if h == nil {
@@ -80,6 +88,7 @@ func (r *noteHistoryRepository) fillHistoryContent(uid int64, h *domain.NoteHist
 	}
 	folder := r.dao.GetNoteHistoryFolderPath(uid, h.ID)
 
+	// Load patch
 	// 加载补丁
 	patch, exists, err := r.dao.LoadContentFromFile(folder, "diff.patch")
 	if err != nil {
@@ -100,6 +109,7 @@ func (r *noteHistoryRepository) fillHistoryContent(uid int64, h *domain.NoteHist
 		return fmt.Errorf("history diff patch file not found: %w", os.ErrNotExist)
 	}
 
+	// Load content
 	// 加载内容
 	content, exists, err := r.dao.LoadContentFromFile(folder, "content.txt")
 	if err != nil {
@@ -122,6 +132,7 @@ func (r *noteHistoryRepository) fillHistoryContent(uid int64, h *domain.NoteHist
 	return nil
 }
 
+// GetByID retrieves history record by ID
 // GetByID 根据ID获取历史记录
 func (r *noteHistoryRepository) GetByID(ctx context.Context, id, uid int64) (*domain.NoteHistory, error) {
 	u := r.noteHistory(uid).NoteHistory
@@ -132,6 +143,7 @@ func (r *noteHistoryRepository) GetByID(ctx context.Context, id, uid int64) (*do
 	return r.toDomain(m, uid)
 }
 
+// GetByNoteIDAndHash retrieves history record by note ID and content hash
 // GetByNoteIDAndHash 根据笔记ID和内容哈希获取历史记录
 func (r *noteHistoryRepository) GetByNoteIDAndHash(ctx context.Context, noteID int64, contentHash string, uid int64) (*domain.NoteHistory, error) {
 	u := r.noteHistory(uid).NoteHistory
@@ -142,6 +154,7 @@ func (r *noteHistoryRepository) GetByNoteIDAndHash(ctx context.Context, noteID i
 	return r.toDomain(m, uid)
 }
 
+// Create creates history record
 // Create 创建历史记录
 func (r *noteHistoryRepository) Create(ctx context.Context, history *domain.NoteHistory, uid int64) (*domain.NoteHistory, error) {
 	var result *domain.NoteHistory
@@ -150,20 +163,24 @@ func (r *noteHistoryRepository) Create(ctx context.Context, history *domain.Note
 	err := r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
 		u := r.noteHistory(uid).NoteHistory
 		m := &model.NoteHistory{
-			NoteID:      history.NoteID,
-			VaultID:     history.VaultID,
-			Path:        history.Path,
-			ContentHash: history.ContentHash,
-			ClientName:  history.ClientName,
-			Version:     history.Version,
-			CreatedAt:   timex.Time(history.CreatedAt),
-			UpdatedAt:   timex.Time(history.UpdatedAt),
+			NoteID:        history.NoteID,
+			VaultID:       history.VaultID,
+			Path:          history.Path,
+			ContentHash:   history.ContentHash,
+			ClientName:    history.ClientName,
+			ClientType:    history.ClientType,
+			ClientVersion: history.ClientVersion,
+			Version:       history.Version,
+			CreatedAt:     timex.Time(history.CreatedAt),
+			UpdatedAt:     timex.Time(history.UpdatedAt),
 		}
 
+		// Temporarily store content for file writing
 		// 暂存内容用于写文件
 		diffPatch := history.DiffPatch
 		content := history.Content
 
+		// Do not save large data in the database
 		// 不在数据库中保存大数据
 		m.DiffPatch = ""
 		m.Content = ""
@@ -173,6 +190,7 @@ func (r *noteHistoryRepository) Create(ctx context.Context, history *domain.Note
 			return createErr
 		}
 
+		// Save to file
 		// 保存到文件
 		folder := r.dao.GetNoteHistoryFolderPath(uid, m.ID)
 		if err := r.dao.SaveContentToFile(folder, "diff.patch", diffPatch); err != nil {
@@ -198,6 +216,7 @@ func (r *noteHistoryRepository) Create(ctx context.Context, history *domain.Note
 	return result, nil
 }
 
+// ListByNoteID retrieves history record list by note ID
 // ListByNoteID 根据笔记ID获取历史记录列表
 func (r *noteHistoryRepository) ListByNoteID(ctx context.Context, noteID int64, page, pageSize int, uid int64) ([]*domain.NoteHistory, int64, error) {
 	u := r.noteHistory(uid).NoteHistory
@@ -227,6 +246,7 @@ func (r *noteHistoryRepository) ListByNoteID(ctx context.Context, noteID int64, 
 	return results, count, nil
 }
 
+// GetLatestVersion retrieves the latest version number of the note
 // GetLatestVersion 获取笔记的最新版本号
 func (r *noteHistoryRepository) GetLatestVersion(ctx context.Context, noteID, uid int64) (int64, error) {
 	u := r.noteHistory(uid).NoteHistory
@@ -240,6 +260,7 @@ func (r *noteHistoryRepository) GetLatestVersion(ctx context.Context, noteID, ui
 	return m.Version, nil
 }
 
+// Migrate migrates history records (update NoteID)
 // Migrate 迁移历史记录（更新 NoteID）
 func (r *noteHistoryRepository) Migrate(ctx context.Context, oldNoteID, newNoteID, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -249,6 +270,7 @@ func (r *noteHistoryRepository) Migrate(ctx context.Context, oldNoteID, newNoteI
 	})
 }
 
+// GetNoteIDsWithOldHistory retrieves note ID list with old history records
 // GetNoteIDsWithOldHistory 获取有旧历史记录的笔记ID列表
 func (r *noteHistoryRepository) GetNoteIDsWithOldHistory(ctx context.Context, cutoffTime int64, uid int64) ([]int64, error) {
 	u := r.noteHistory(uid).NoteHistory
@@ -264,11 +286,13 @@ func (r *noteHistoryRepository) GetNoteIDsWithOldHistory(ctx context.Context, cu
 	return noteIDs, nil
 }
 
+// DeleteOldVersions deletes old version history records, keeping the most recent N versions
 // DeleteOldVersions 删除旧版本历史记录，保留最近 N 个版本
 func (r *noteHistoryRepository) DeleteOldVersions(ctx context.Context, noteID int64, cutoffTime int64, keepVersions int, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
 		u := r.noteHistory(uid).NoteHistory
 
+		// First get the minimum version number of the most recent N versions to be retained
 		// 先获取需要保留的最近 N 个版本的最小版本号
 		var minKeepVersion int64 = 0
 		if keepVersions > 0 {
@@ -287,6 +311,8 @@ func (r *noteHistoryRepository) DeleteOldVersions(ctx context.Context, noteID in
 
 		cutoffTimeValue := timex.Time(time.UnixMilli(cutoffTime))
 
+		// Query history record IDs to be deleted
+		// Query history record IDs to be deleted
 		// 查询需要删除的历史记录ID
 		var toDeleteIDs []int64
 		q := u.WithContext(ctx).
@@ -310,12 +336,14 @@ func (r *noteHistoryRepository) DeleteOldVersions(ctx context.Context, noteID in
 			return nil
 		}
 
+		// Delete database records
 		// 删除数据库记录
 		_, err = u.WithContext(ctx).Where(u.ID.In(toDeleteIDs...)).Delete()
 		if err != nil {
 			return err
 		}
 
+		// Delete associated files
 		// 删除关联的文件
 		for _, id := range toDeleteIDs {
 			folder := r.dao.GetNoteHistoryFolderPath(uid, id)
@@ -333,6 +361,7 @@ func (r *noteHistoryRepository) DeleteOldVersions(ctx context.Context, noteID in
 	})
 }
 
+// Delete deletes the history record with the specified ID
 // Delete 删除指定ID的历史记录
 func (r *noteHistoryRepository) Delete(ctx context.Context, id, uid int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
@@ -344,6 +373,7 @@ func (r *noteHistoryRepository) Delete(ctx context.Context, id, uid int64) error
 			return err
 		}
 
+		// Delete associated files
 		// 删除关联的文件
 		folder := r.dao.GetNoteHistoryFolderPath(uid, id)
 		if err := r.dao.RemoveContentFolder(folder); err != nil {
@@ -359,5 +389,43 @@ func (r *noteHistoryRepository) Delete(ctx context.Context, id, uid int64) error
 	})
 }
 
+// DeleteByVaultID physically deletes all history in a vault
+// DeleteByVaultID 物理删除仓库下的所有历史记录
+func (r *noteHistoryRepository) DeleteByVaultID(ctx context.Context, vaultID, uid int64) error {
+	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
+		u := r.noteHistory(uid).NoteHistory
+
+		// 查找该仓库下的所有历史记录 ID
+		histories, err := u.WithContext(ctx).Where(u.VaultID.Eq(vaultID)).Select(u.ID).Find()
+		if err != nil {
+			return err
+		}
+
+		if len(histories) == 0 {
+			return nil
+		}
+
+		var ids []int64
+		for _, h := range histories {
+			ids = append(ids, h.ID)
+		}
+
+		// 从数据库删除
+		_, err = u.WithContext(ctx).Where(u.VaultID.Eq(vaultID)).Delete()
+		if err != nil {
+			return err
+		}
+
+		// 删除物理文件夹
+		for _, id := range ids {
+			folder := r.dao.GetNoteHistoryFolderPath(uid, id)
+			_ = r.dao.RemoveContentFolder(folder)
+		}
+
+		return nil
+	})
+}
+
+// Ensure noteHistoryRepository implements domain.NoteHistoryRepository interface
 // 确保 noteHistoryRepository 实现了 domain.NoteHistoryRepository 接口
 var _ domain.NoteHistoryRepository = (*noteHistoryRepository)(nil)

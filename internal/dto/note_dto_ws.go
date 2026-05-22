@@ -1,7 +1,7 @@
 package dto
 
 // NoteSyncRenameMessage message structure for note rename during sync
-// 同步过程中笔记重命名的消息结构
+// NoteSyncRenameMessage 同步过程中笔记重命名的消息结构
 type NoteSyncRenameMessage struct {
 	Path             string `json:"path" form:"path" binding:"required" example:"NewName.md"` // New path // 新路径
 	PathHash         string `json:"pathHash" form:"pathHash" example:"nfhash123"`             // New path hash // 新路径哈希
@@ -61,4 +61,28 @@ type NoteSyncDeleteMessage struct {
 	Mtime            int64  `json:"mtime" form:"mtime" example:"1700000000"`               // Modification timestamp // 修改时间戳
 	Size             int64  `json:"size" form:"size" example:"1024"`                       // File size // 文件大小
 	UpdatedTimestamp int64  `json:"lastTime" form:"updatedTimestamp" example:"1700000000"` // Record update timestamp // 记录更新时间戳
+}
+
+// NoteModifyAckMessage note modify operation ACK, sent back to sender after server processes NoteModify
+// NoteModifyAckMessage 笔记修改操作 ACK，服务端处理完 NoteModify 后回发给发送方
+type NoteModifyAckMessage struct {
+	LastTime int64  `json:"lastTime"` // Server write timestamp // 服务端写入时间戳
+	Path     string `json:"path"`     // Note path // 笔记路径
+	PathHash string `json:"pathHash"` // Path hash // 路径哈希值
+}
+
+// NoteRenameAckMessage note rename operation ACK, sent back to sender after server processes NoteRename
+// NoteRenameAckMessage 笔记重命名操作 ACK，服务端处理完 NoteRename 后回发给发送方
+type NoteRenameAckMessage struct {
+	LastTime int64  `json:"lastTime"` // Server write timestamp // 服务端写入时间戳
+	Path     string `json:"path"`     // New note path after rename // 重命名后的笔记新路径
+	PathHash string `json:"pathHash"` // Path hash // 路径哈希值
+}
+
+// NoteDeleteAckMessage note delete operation ACK, sent back to sender after server processes NoteDelete
+// NoteDeleteAckMessage 笔记删除操作 ACK，服务端处理完 NoteDelete 后回发给发送方
+type NoteDeleteAckMessage struct {
+	LastTime int64  `json:"lastTime"` // Server write timestamp // 服务端写入时间戳
+	Path     string `json:"path"`     // Note path // 笔记路径
+	PathHash string `json:"pathHash"` // Path hash // 路径哈希值
 }

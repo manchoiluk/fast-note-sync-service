@@ -25,14 +25,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Client name constants
-// 客户端名称常量
-const (
-	// WebClientName Web client name
-	// WebClientName Web 客户端名称
-	WebClientName = "Web"
-)
-
 // App application container, encapsulates all dependencies and services
 // App 应用容器，封装所有依赖和服务
 type App struct {
@@ -50,6 +42,7 @@ type App struct {
 	checkVersion     pkgapp.CheckVersionInfo
 	supportRecordsMu sync.RWMutex
 	supportRecords   map[string][]pkgapp.SupportRecord
+	wss              *pkgapp.WebsocketServer // WebSocket server reference // WebSocket 服务器引用
 }
 
 // NewApp creates application container instance
@@ -148,6 +141,7 @@ func (a *App) Version() pkgapp.VersionInfo {
 		Version:   Version,
 		GitTag:    GitTag,
 		BuildTime: BuildTime,
+		Changelog: strings.ReplaceAll(Changelog, "@@@", "\n"),
 	}
 }
 
@@ -190,6 +184,35 @@ func (a *App) SetCheckVersionInfo(info pkgapp.CheckVersionInfo) {
 	a.checkVersion = info
 }
 
+// SetWSS sets WebSocket server reference and binds sync hooks
+// SetWSS 设置 WebSocket 服务器引用并绑定同步钩子
+func (a *App) SetWSS(wss *pkgapp.WebsocketServer) {
+	a.wss = wss
+	if a.wss != nil && a.Services != nil && a.Services.TokenService != nil {
+		a.Services.TokenService.SetSyncHandler(func(uid int64, tokenID int64, scope string, kick bool) {
+			if kick {
+				a.wss.KickToken(uid, tokenID)
+			} else {
+				a.wss.UpdateTokenScope(uid, tokenID, scope)
+			}
+		})
+	}
+}
+
+// GetWSS gets WebSocket server reference
+// GetWSS 获取 WebSocket 服务器引用
+func (a *App) GetWSS() *pkgapp.WebsocketServer {
+	return a.wss
+}
+
+// BroadcastClientInfo broadcasts version information to all connected clients
+// BroadcastClientInfo 向所有连接的客户端广播版本信息
+func (a *App) BroadcastClientInfo() {
+	if a.wss != nil {
+		a.wss.BroadcastClientInfo()
+	}
+}
+
 // Validator gets validator
 // Validator 获取验证器
 func (a *App) Validator() pkgapp.ValidatorInterface {
@@ -222,6 +245,12 @@ func (a *App) IsProductionMode() bool {
 	return a.config.Log.Production
 }
 
+// GetTokenService gets TokenService
+// GetTokenService 获取 Token 服务
+func (a *App) GetTokenService() any {
+	return a.TokenService
+}
+
 // IsPullFromGitHub returns whether current source is GitHub
 // IsPullFromGitHub 返回当前拉取源是否为 GitHub
 func (a *App) IsPullFromGitHub() bool {
@@ -252,20 +281,35 @@ func (a *App) WriteQueueManager() *writequeue.Manager {
 
 // GetNoteService gets NoteService, supports setting client info
 // GetNoteService 获取 NoteService，支持设置客户端信息
-func (a *App) GetNoteService(clientName, clientVersion string) service.NoteService {
-	if clientName != "" || clientVersion != "" {
-		return a.NoteService.WithClient(clientName, clientVersion)
+func (a *App) GetNoteService(clientType, clientName, clientVersion string) service.NoteService {
+	if clientType != "" || clientName != "" || clientVersion != "" {
+		return a.NoteService.WithClient(clientType, clientName, clientVersion)
 	}
 	return a.NoteService
 }
 
+// GetFolderService returns FolderService instance with client information
+// GetFolderService 返回带有客户端信息的 FolderService 示例
+func (a *App) GetFolderService(clientType, clientName, clientVersion string) service.FolderService {
+	return a.FolderService.WithClient(clientType, clientName, clientVersion)
+}
+
 // GetFileService gets FileService, supports setting client info
 // GetFileService 获取 FileService，支持设置客户端信息
-func (a *App) GetFileService(clientName, clientVersion string) service.FileService {
-	if clientName != "" || clientVersion != "" {
-		return a.FileService.WithClient(clientName, clientVersion)
+func (a *App) GetFileService(clientType, clientName, clientVersion string) service.FileService {
+	if clientType != "" || clientName != "" || clientVersion != "" {
+		return a.FileService.WithClient(clientType, clientName, clientVersion)
 	}
 	return a.FileService
+}
+
+// GetSettingService gets SettingService, supports setting client info
+// GetSettingService 获取 SettingService，支持设置客户端信息
+func (a *App) GetSettingService(clientType, clientName, clientVersion string) service.SettingService {
+	if clientType != "" || clientName != "" || clientVersion != "" {
+		return a.SettingService.WithClient(clientType, clientName, clientVersion)
+	}
+	return a.SettingService
 }
 
 // loadSupportRecords loads support records from embedded file system
@@ -285,6 +329,7 @@ func (a *App) loadSupportRecords(efs embed.FS) {
 	for _, entry := range entries {
 		name := entry.Name()
 		if !entry.IsDir() && strings.HasPrefix(name, "Support.") && strings.HasSuffix(name, ".json") {
+
 			// Extract language from Support.{lang}.json
 			// 从 Support.{lang}.json 提取语言
 			parts := strings.Split(name, ".")
@@ -309,6 +354,7 @@ func (a *App) loadSupportRecords(efs embed.FS) {
 			a.logger.Debug("Loaded support records", zap.String("lang", lang), zap.Int("count", len(records)))
 		}
 	}
+
 }
 
 // GetSupportRecords gets all support records
@@ -317,6 +363,17 @@ func (a *App) GetSupportRecords() map[string][]pkgapp.SupportRecord {
 	a.supportRecordsMu.RLock()
 	defer a.supportRecordsMu.RUnlock()
 	return a.supportRecords
+}
+
+// getCNYValue gets support record amount converted to CNY for sorting
+// getCNYValue 将打赏记录金额折合为人民币价值用于排序
+func getCNYValue(amountStr, unit string) float64 {
+	amount, _ := strconv.ParseFloat(amountStr, 64)
+	unitUpper := strings.ToUpper(unit)
+	if unitUpper == "USD" || unitUpper == "$" {
+		return amount * 6.81 // 采用与 JS 统一的 6.81 汇率
+	}
+	return amount
 }
 
 // GetSupportRecordsPage gets support records with pagination and sorting
@@ -335,31 +392,57 @@ func (a *App) GetSupportRecordsPage(lang, sortBy, sortOrder string, page, pageSi
 		records = a.supportRecords["en"]
 	}
 
-	total := len(records)
+	actualSortBy := sortBy
+	var filteredRecords []pkgapp.SupportRecord
+
+	if sortBy == "amount_3m" || sortBy == "amount_6m" {
+		actualSortBy = "amount"
+		threeMonthsAgo := time.Now().AddDate(0, -3, 0)
+		filteredRecords = make([]pkgapp.SupportRecord, 0, len(records))
+		for _, r := range records {
+			// Date format: 2026/03/27 00:36:52
+			t, err := time.Parse("2006/01/02 15:04:05", r.Time)
+			if err == nil && t.After(threeMonthsAgo) {
+				filteredRecords = append(filteredRecords, r)
+			}
+		}
+	} else {
+		filteredRecords = make([]pkgapp.SupportRecord, len(records))
+		copy(filteredRecords, records)
+	}
+
+	// Normalize USD to $ for display
+	for i := range filteredRecords {
+		if strings.ToUpper(filteredRecords[i].Unit) == "USD" {
+			filteredRecords[i].Unit = "$"
+		}
+	}
+
+	total := len(filteredRecords)
 	if total == 0 {
 		return []pkgapp.SupportRecord{}, 0
 	}
 
-	sortedRecords := make([]pkgapp.SupportRecord, total)
-	copy(sortedRecords, records)
-
-	if sortBy != "" {
+	if actualSortBy != "" {
 		isDesc := strings.ToLower(sortOrder) == "desc"
-		sort.SliceStable(sortedRecords, func(i, j int) bool {
+		sort.SliceStable(filteredRecords, func(i, j int) bool {
 			var less bool
-			switch sortBy {
+			switch actualSortBy {
 			case "amount":
-				amountI, _ := strconv.ParseFloat(sortedRecords[i].Amount, 64)
-				amountJ, _ := strconv.ParseFloat(sortedRecords[j].Amount, 64)
-				less = amountI < amountJ
+				valI := getCNYValue(filteredRecords[i].Amount, filteredRecords[i].Unit)
+				valJ := getCNYValue(filteredRecords[j].Amount, filteredRecords[j].Unit)
+				if valI == valJ {
+					return filteredRecords[i].Time > filteredRecords[j].Time
+				}
+				less = valI < valJ
 			case "name":
-				less = sortedRecords[i].Name < sortedRecords[j].Name
+				less = filteredRecords[i].Name < filteredRecords[j].Name
 			case "item":
-				less = sortedRecords[i].Item < sortedRecords[j].Item
+				less = filteredRecords[i].Item < filteredRecords[j].Item
 			case "time":
 				fallthrough
 			default:
-				less = sortedRecords[i].Time < sortedRecords[j].Time
+				less = filteredRecords[i].Time < filteredRecords[j].Time
 			}
 			if isDesc {
 				return !less
@@ -381,7 +464,7 @@ func (a *App) GetSupportRecordsPage(lang, sortBy, sortOrder string, page, pageSi
 		end = total
 	}
 
-	return sortedRecords[offset:end], total
+	return filteredRecords[offset:end], total
 }
 
 // UpdateSupportRecords updates support records for a specific language

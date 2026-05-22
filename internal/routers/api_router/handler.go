@@ -3,6 +3,9 @@
 package api_router
 
 import (
+	"net/url"
+
+	"github.com/gin-gonic/gin"
 	"github.com/haierkeys/fast-note-sync-service/internal/app"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
 )
@@ -26,4 +29,22 @@ func NewHandler(a *app.App) *Handler {
 // NewHandlerWithWSS 创建带 WebSocket 服务的 Handler 实例
 func NewHandlerWithWSS(a *app.App, wss *pkgapp.WebsocketServer) *Handler {
 	return &Handler{App: a, WSS: wss}
+}
+
+// getClientInfo extracts client type, name and version from request headers
+// getClientInfo 从请求头中提取客户端类型、名称和版本
+func (h *Handler) getClientInfo(c *gin.Context) (string, string, string) {
+	clientType := c.GetHeader("X-Client")
+	clientName := c.GetHeader("X-Client-Name")
+	clientVersion := c.GetHeader("X-Client-Version")
+
+	// Decode clientName if it's URL-encoded
+	// 如果 clientName 是 URL 编码的，则进行解码
+	if clientName != "" {
+		if decoded, err := url.QueryUnescape(clientName); err == nil {
+			clientName = decoded
+		}
+	}
+
+	return clientType, clientName, clientVersion
 }

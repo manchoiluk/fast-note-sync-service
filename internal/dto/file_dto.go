@@ -16,17 +16,27 @@ type FileUpdateCheckRequest struct {
 	Mtime       int64  `json:"mtime" form:"mtime" binding:"required" example:"1700000000"`     // Modification timestamp // 修改时间戳
 }
 
+// FileUploadRequest Request parameters for direct file upload (Internal/Public isolation)
+// 用于直接文件上传的请求参数（实现内外隔离）
+type FileUploadRequest struct {
+	Vault    string `form:"vault" binding:"required" example:"MyVault"`  // Vault name // 保险库名称
+	Path     string `form:"path" binding:"required" example:"Image.png"` // File path // 文件路径
+	PathHash string `form:"pathHash" example:"fhash123"`                 // Path hash // 路径哈希
+	Ctime    int64  `form:"ctime" example:"1700000000"`                  // Creation timestamp // 创建时间戳
+	Mtime    int64  `form:"mtime" example:"1700000000"`                  // Modification timestamp // 修改时间戳
+}
+
 // FileUpdateRequest Request parameters for creating or modifying a file
 // 用于创建或修改文件的请求参数
 type FileUpdateRequest struct {
-	Vault       string `json:"vault" form:"vault" binding:"required" example:"MyVault"`          // Vault name // 保险库名称
-	Path        string `json:"path" form:"path" binding:"required" example:"Image.png"`          // File path // 文件路径
-	PathHash    string `json:"pathHash" form:"pathHash" example:"fhash123"`                      // Path hash // 路径哈希
-	ContentHash string `json:"contentHash" form:"contentHash" binding:"" example:"chash456"`     // Content hash // 内容哈希
-	SavePath    string `json:"savePath" form:"savePath" binding:"" example:"/uploads/Image.png"` // Save path on server // 服务器保存路径
-	Size        int64  `json:"size" form:"size" example:"1024"`                                  // File size // 文件大小
-	Ctime       int64  `json:"ctime" form:"ctime" example:"1700000000"`                          // Creation timestamp // 创建时间戳
-	Mtime       int64  `json:"mtime" form:"mtime" example:"1700000000"`                          // Modification timestamp // 修改时间戳
+	Vault       string `json:"vault" form:"vault" binding:"required" example:"MyVault"`      // Vault name // 保险库名称
+	Path        string `json:"path" form:"path" binding:"required" example:"Image.png"`      // File path // 文件路径
+	PathHash    string `json:"pathHash" form:"pathHash" example:"fhash123"`                  // Path hash // 路径哈希
+	ContentHash string `json:"contentHash" form:"contentHash" binding:"" example:"chash456"` // Content hash // 内容哈希
+	SavePath    string `json:"-"`                                                            // Save path on server (Internal only) // 服务器保存路径（仅内部使用）
+	Size        int64  `json:"size" form:"size" example:"1024"`                              // File size // 文件大小
+	Ctime       int64  `json:"ctime" form:"ctime" example:"1700000000"`                      // Creation timestamp // 创建时间戳
+	Mtime       int64  `json:"mtime" form:"mtime" example:"1700000000"`                      // Modification timestamp // 修改时间戳
 }
 
 // FileDeleteRequest Parameters required for deleting a file
@@ -46,6 +56,7 @@ type FileRestoreRequest struct {
 }
 
 // FileRecycleClearRequest clean recycle bin request
+// FileRecycleClearRequest 清理回收站请求
 type FileRecycleClearRequest struct {
 	Vault    string `json:"vault" form:"vault" binding:"required" example:"MyVault"` // Vault name // 保险库名称
 	Path     string `json:"path" form:"path" example:"path/to/file.png"`             // File path, empty for all // 文件路径，为空则清理全部
@@ -88,7 +99,7 @@ type FileUploadCompleteRequest struct {
 }
 
 // FileGetRequest Request parameters for retrieving a single file
-// 用于获取单条文件的请求参数
+// FileGetRequest 用于获取单条文件的请求参数
 type FileGetRequest struct {
 	Vault     string `json:"vault" form:"vault" binding:"required" example:"MyVault"` // Vault name // 保险库名称
 	Path      string `json:"path" form:"path" binding:"required" example:"Image.png"` // File path // 文件路径
@@ -97,7 +108,7 @@ type FileGetRequest struct {
 }
 
 // FileListRequest Pagination parameters for retrieving the file list
-// 获取文件列表的分页参数
+// FileListRequest 获取文件列表的分页参数
 type FileListRequest struct {
 	Vault     string `json:"vault" form:"vault" binding:"required" example:"MyVault"` // Vault name // 保险库名称
 	Keyword   string `json:"keyword" form:"keyword" example:"vacation"`               // Search keyword // 搜索关键词
@@ -107,7 +118,7 @@ type FileListRequest struct {
 }
 
 // FileRenameRequest Parameters required for renaming a file
-// 重命名文件所需参数
+// FileRenameRequest 重命名文件所需参数
 type FileRenameRequest struct {
 	Vault       string `json:"vault" form:"vault" binding:"required" example:"MyVault"`          // Vault name // 保险库名称
 	Path        string `json:"path" form:"path" binding:"required" example:"NewImage.png"`       // New path // 新路径

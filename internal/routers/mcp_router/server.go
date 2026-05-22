@@ -2,6 +2,7 @@ package mcp_router
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/haierkeys/fast-note-sync-service/internal/app"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
@@ -16,6 +17,20 @@ func getUIDFromContext(ctx context.Context) int64 {
 		}
 	}
 	return 1
+}
+
+func getClientInfoFromContext(ctx context.Context) (string, string, string) {
+	var cType, cName, cVer string
+	if val := ctx.Value("client_type"); val != nil {
+		cType, _ = val.(string)
+	}
+	if val := ctx.Value("client_name"); val != nil {
+		cName, _ = val.(string)
+	}
+	if val := ctx.Value("client_version"); val != nil {
+		cVer, _ = val.(string)
+	}
+	return cType, cName, cVer
 }
 
 func getDefaultVaultName(ctx context.Context, appContainer *app.App) string {
@@ -45,6 +60,15 @@ func getArgs(req mcp.CallToolRequest) map[string]interface{} {
 		}
 	}
 	return make(map[string]interface{})
+}
+
+func checkPermission(ctx context.Context, function string) error {
+	scope, _ := ctx.Value("scope").(string)
+	cType, _, _ := getClientInfoFromContext(ctx)
+	if !pkgapp.VerifyPermissions(scope, "mcp", cType, function) {
+		return fmt.Errorf("permission denied: %s", function)
+	}
+	return nil
 }
 
 func NewMCPServer(appContainer *app.App, wss *pkgapp.WebsocketServer) *mcpsrv.MCPServer {

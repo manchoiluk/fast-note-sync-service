@@ -41,6 +41,7 @@ type UserShareRepository interface {
 	GetByID(ctx context.Context, uid int64, id int64) (*UserShare, error)
 	GetByPath(ctx context.Context, uid int64, vaultID int64, pathHash string) (*UserShare, error)
 	GetByRes(ctx context.Context, uid int64, resType string, resID int64) (*UserShare, error)
+	UpdateResources(ctx context.Context, uid int64, id int64, resources map[string][]string) error
 	UpdateStatus(ctx context.Context, uid int64, id int64, status int64) error
 	UpdateStatusByRes(ctx context.Context, uid int64, resType string, resID int64, status int64) error
 	UpdateViewStats(ctx context.Context, uid int64, id int64, viewCountIncr int64, lastViewedAt time.Time) error
@@ -60,4 +61,8 @@ type UserShareRepository interface {
 	// MigrateResID updates res_id and resources JSON for a share when a note/file is renamed.
 	// MigrateResID 在笔记/文件重命名时更新分享记录的资源 ID 和资源列表。
 	MigrateResID(ctx context.Context, uid int64, oldResID int64, newResID int64) error
+
+	// DeleteByVaultID deletes all shares belonging to a vault (notes/files in that vault)
+	// DeleteByVaultID 删除属于该仓库的所有分享记录（仓库下的笔记或文件）
+	DeleteByVaultID(ctx context.Context, vaultID, uid int64) error
 }

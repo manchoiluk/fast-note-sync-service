@@ -2,6 +2,9 @@
 /composer.phar
 /composer.lock
 
+scripts/node_modules
+
+*.exe
 # -- Editores -----------------------------------------
 # vim
 .*.sw[a-z]
@@ -86,3 +89,25 @@ docs/*_打赏 链接小票单记录*.csv
 # Claude Code
 CLAUDE.md
 .claude/
+
+# Python virtual environment
+.venv/
+docs/.support-translate-dict.json
+
+
+
+.env
+# vscode
+.vscode
+
+# Intellij
+*.iml
+.idea
+
+
+# Claude Code
+CLAUDE.md
+.claude/
+
+# env
+.env

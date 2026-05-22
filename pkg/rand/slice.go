@@ -12,8 +12,7 @@ func init() {
 	r = rand.New(rand.NewSource(time.Now().UnixNano()))
 }
 
-// Randomly pick one from string slice and return
-// 随机从 字符串slice 里抽取一个返回
+// Randomly pick one from string slice and return // 随机从 字符串slice 里抽取一个返回
 func RandomStrSliceOne(s []string) string {
 	return s[r.Intn(len(s))]
 }
@@ -25,7 +24,7 @@ func GetRandString(length int) string {
 	char := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	charArr := strings.Split(char, "")
 	charlen := len(charArr)
-	ran := rand.New(rand.NewSource(time.Now().Unix()))
+	ran := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	rchar := make([]string, 0, length)
 	for i := 1; i <= length; i++ {

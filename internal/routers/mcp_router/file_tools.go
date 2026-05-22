@@ -26,6 +26,9 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		mcp.WithString("keyword", mcp.Description("Search keyword")),
 	)
 	srv.AddTool(toolListFiles, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := checkPermission(ctx, "file_r"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		uid := getUIDFromContext(ctx)
 		args := getArgs(req)
 		vault, _ := args["vault"].(string)
@@ -38,7 +41,7 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 			Page:     pkgapp.GetPage(1),
 			PageSize: pkgapp.GetPageSize(100),
 		}
-		files, _, err := fileSvc.List(ctx, uid, &dto.FileListRequest{
+		files, _, err := fileSvc.WithClient(getClientInfoFromContext(ctx)).List(ctx, uid, &dto.FileListRequest{
 			Vault:   vault,
 			Keyword: keyword,
 		}, pager)
@@ -61,6 +64,9 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		mcp.WithString("path", mcp.Required(), mcp.Description("File path")),
 	)
 	srv.AddTool(toolGetFileInfo, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := checkPermission(ctx, "file_r"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		uid := getUIDFromContext(ctx)
 		args := getArgs(req)
 		vault, _ := args["vault"].(string)
@@ -69,7 +75,7 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		}
 		path, _ := args["path"].(string)
 
-		file, err := fileSvc.Get(ctx, uid, &dto.FileGetRequest{
+		file, err := fileSvc.WithClient(getClientInfoFromContext(ctx)).Get(ctx, uid, &dto.FileGetRequest{
 			Vault:    vault,
 			Path:     path,
 			PathHash: util.EncodeHash32(path),
@@ -90,6 +96,9 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		mcp.WithString("path", mcp.Required(), mcp.Description("File path")),
 	)
 	srv.AddTool(toolGetContent, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := checkPermission(ctx, "file_r"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		uid := getUIDFromContext(ctx)
 		args := getArgs(req)
 		vault, _ := args["vault"].(string)
@@ -98,7 +107,7 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		}
 		path, _ := args["path"].(string)
 
-		reader, _, _, _, err := fileSvc.GetContent(ctx, uid, &dto.FileGetRequest{
+		reader, _, _, _, err := fileSvc.WithClient(getClientInfoFromContext(ctx)).GetContent(ctx, uid, &dto.FileGetRequest{
 			Vault:    vault,
 			Path:     path,
 			PathHash: util.EncodeHash32(path),
@@ -124,6 +133,9 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		mcp.WithString("path", mcp.Required(), mcp.Description("File path")),
 	)
 	srv.AddTool(toolDeleteFile, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := checkPermission(ctx, "file_w"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		uid := getUIDFromContext(ctx)
 		args := getArgs(req)
 		vault, _ := args["vault"].(string)
@@ -132,7 +144,7 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		}
 		path, _ := args["path"].(string)
 
-		file, err := fileSvc.Delete(ctx, uid, &dto.FileDeleteRequest{
+		file, err := fileSvc.WithClient(getClientInfoFromContext(ctx)).Delete(ctx, uid, &dto.FileDeleteRequest{
 			Vault:    vault,
 			Path:     path,
 			PathHash: util.EncodeHash32(path),
@@ -154,6 +166,9 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		mcp.WithString("newPath", mcp.Required(), mcp.Description("New file path")),
 	)
 	srv.AddTool(toolRenameFile, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := checkPermission(ctx, "file_w"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		uid := getUIDFromContext(ctx)
 		args := getArgs(req)
 		vault, _ := args["vault"].(string)
@@ -163,7 +178,7 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		oldPath, _ := args["oldPath"].(string)
 		newPath, _ := args["newPath"].(string)
 
-		oldFile, newFile, err := fileSvc.Rename(ctx, uid, &dto.FileRenameRequest{
+		oldFile, newFile, err := fileSvc.WithClient(getClientInfoFromContext(ctx)).Rename(ctx, uid, &dto.FileRenameRequest{
 			Vault:       vault,
 			OldPath:     oldPath,
 			OldPathHash: util.EncodeHash32(oldPath),
@@ -196,6 +211,9 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		mcp.WithString("path", mcp.Required(), mcp.Description("File path")),
 	)
 	srv.AddTool(toolRestoreFile, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := checkPermission(ctx, "file_w"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		uid := getUIDFromContext(ctx)
 		args := getArgs(req)
 		vault, _ := args["vault"].(string)
@@ -204,7 +222,7 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		}
 		path, _ := args["path"].(string)
 
-		file, err := fileSvc.Restore(ctx, uid, &dto.FileRestoreRequest{
+		file, err := fileSvc.WithClient(getClientInfoFromContext(ctx)).Restore(ctx, uid, &dto.FileRestoreRequest{
 			Vault:    vault,
 			Path:     path,
 			PathHash: util.EncodeHash32(path),
@@ -225,6 +243,9 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		mcp.WithString("path", mcp.Description("File path. If empty, potentially clear all")),
 	)
 	srv.AddTool(toolRecycleClearFile, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := checkPermission(ctx, "file_w"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		uid := getUIDFromContext(ctx)
 		args := getArgs(req)
 		vault, _ := args["vault"].(string)
@@ -233,7 +254,7 @@ func registerFileTools(srv *mcpsrv.MCPServer, appContainer *app.App, wss *pkgapp
 		}
 		path, _ := args["path"].(string)
 
-		err := fileSvc.RecycleClear(ctx, uid, &dto.FileRecycleClearRequest{
+		err := fileSvc.WithClient(getClientInfoFromContext(ctx)).RecycleClear(ctx, uid, &dto.FileRecycleClearRequest{
 			Vault:    vault,
 			Path:     path,
 			PathHash: util.EncodeHash32(path),

@@ -81,7 +81,7 @@ func (h *NoteWSHandler) NoteModify(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 
 	ctx := c.Context()
 
-	noteSvc := h.App.GetNoteService(c.ClientName, c.ClientVersion)
+	noteSvc := h.App.GetNoteService(c.ClientType, c.ClientName, c.ClientVersion)
 
 	// Check and create vault, internally uses SF to merge concurrent requests, avoiding duplicate creation issues
 	// 检查并创建仓库，内部使用SF合并并发请求, 避免重复创建问题
@@ -116,7 +116,13 @@ func (h *NoteWSHandler) NoteModify(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 					zap.Int64(logger.FieldUID, c.User.UID),
 					zap.String(logger.FieldPath, params.Path),
 					zap.String("contentHash", contentHash))
-				c.ToResponse(code.SuccessNoUpdate)
+				// 内容已存在，仍需发 NoteModifyAck 以便客户端消费 pendingNoteModifies，避免无限重传
+				// Content already exists; still send NoteModifyAck so client can consume pendingNoteModifies and avoid infinite re-upload
+				c.ToResponse(code.Success.WithData(dto.NoteModifyAckMessage{
+					LastTime: nodeCheck.UpdatedTimestamp,
+					Path:     params.Path,
+					PathHash: params.PathHash,
+				}).WithVault(params.Vault), string(dto.NoteModifyAck))
 				return
 			}
 
@@ -351,10 +357,13 @@ func (h *NoteWSHandler) NoteModify(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 			return
 		}
 
-		// Notify all clients to update mtime
-		// 通知所有客户端更新mtime
-
-		c.ToResponse(code.Success)
+		// 通知发送方上传已确认，携带 lastTime 和 path 供客户端更新 hashManager
+		// Notify sender of successful write with lastTime and path for client hashManager update
+		c.ToResponse(code.Success.WithData(dto.NoteModifyAckMessage{
+			LastTime: note.UpdatedTimestamp,
+			Path:     note.Path,
+			PathHash: note.PathHash,
+		}).WithVault(params.Vault), string(dto.NoteModifyAck))
 		c.BroadcastResponse(code.Success.WithData(
 			dto.NoteSyncModifyMessage{
 				Path:             note.Path,
@@ -381,7 +390,17 @@ func (h *NoteWSHandler) NoteModify(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 		).WithVault(params.Vault), dto.NoteSyncMtime)
 		return
 	default:
-		c.ToResponse(code.SuccessNoUpdate)
+		// SuccessNoUpdate 场景也需发 NoteModifyAck，避免客户端 pendingNoteModifies 条目泄漏导致无限重传
+		// SuccessNoUpdate also needs NoteModifyAck to prevent client pendingNoteModifies leak causing infinite re-upload
+		if nodeCheck != nil {
+			c.ToResponse(code.Success.WithData(dto.NoteModifyAckMessage{
+				LastTime: nodeCheck.UpdatedTimestamp,
+				Path:     params.Path,
+				PathHash: params.PathHash,
+			}).WithVault(params.Vault), string(dto.NoteModifyAck))
+		} else {
+			c.ToResponse(code.SuccessNoUpdate.WithVault(params.Vault))
+		}
 		return
 	}
 }
@@ -418,7 +437,7 @@ func (h *NoteWSHandler) NoteModifyCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 
 	ctx := c.Context()
 
-	noteSvc := h.App.GetNoteService(c.ClientName, c.ClientVersion)
+	noteSvc := h.App.GetNoteService(c.ClientType, c.ClientName, c.ClientVersion)
 
 	pkgapp.NoteModifyLog(c.TraceID, c.User.UID, "NoteModifyCheck", params.Path, params.Vault)
 
@@ -442,7 +461,7 @@ func (h *NoteWSHandler) NoteModifyCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 				Path:     nodeCheck.Path,
 				PathHash: nodeCheck.PathHash,
 			},
-		).WithVault(params.Vault), dto.NoteSyncNeedPush)
+		), dto.NoteSyncNeedPush)
 		return
 	case "UpdateMtime":
 		// Force client to update mtime without transferring note content
@@ -454,10 +473,10 @@ func (h *NoteWSHandler) NoteModifyCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 				Mtime:            nodeCheck.Mtime,
 				UpdatedTimestamp: nodeCheck.UpdatedTimestamp,
 			},
-		).WithVault(params.Vault), dto.NoteSyncMtime)
+		), dto.NoteSyncMtime)
 		return
 	default:
-		c.ToResponse(code.SuccessNoUpdate)
+		c.ToResponse(code.SuccessNoUpdate.WithVault(params.Vault))
 		return
 	}
 }
@@ -495,7 +514,7 @@ func (h *NoteWSHandler) NoteDelete(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 
 	ctx := c.Context()
 
-	noteSvc := h.App.GetNoteService(c.ClientName, c.ClientVersion)
+	noteSvc := h.App.GetNoteService(c.ClientType, c.ClientName, c.ClientVersion)
 
 	// Check and create vault, internally uses SF to merge concurrent requests, avoiding duplicate creation issues
 	// 检查并创建仓库，内部使用SF合并并发请求, 避免重复创建问题
@@ -508,7 +527,11 @@ func (h *NoteWSHandler) NoteDelete(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 		return
 	}
 
-	c.ToResponse(code.Success)
+	c.ToResponse(code.Success.WithData(dto.NoteDeleteAckMessage{
+		LastTime: note.UpdatedTimestamp,
+		Path:     note.Path,
+		PathHash: note.PathHash,
+	}).WithVault(params.Vault), string(dto.NoteDeleteAck))
 	c.BroadcastResponse(code.Success.WithData(
 		dto.NoteSyncDeleteMessage{
 			Path:             note.Path,
@@ -552,13 +575,19 @@ func (h *NoteWSHandler) NoteRename(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 	pkgapp.NoteModifyLog(c.TraceID, c.User.UID, "NoteRename", params.Path, params.Vault)
 
 	uid := c.User.UID
-	oldNote, newNote, err := h.App.GetNoteService(c.ClientName, c.ClientVersion).Rename(c.Context(), uid, params)
+	oldNote, newNote, err := h.App.GetNoteService(c.ClientType, c.ClientName, c.ClientVersion).Rename(c.Context(), uid, params)
 	if err != nil {
 		h.respondError(c, code.ErrorRenameNoteTargetExist, err, "websocket_router.note.NoteRename.Rename")
 		return
 	}
 
-	c.ToResponse(code.Success)
+	// 通知发送方重命名已确认，携带 lastTime 供客户端 FIFO 队列更新 hashManager
+	// Notify sender of successful rename with lastTime for client FIFO queue hashManager update
+	c.ToResponse(code.Success.WithData(dto.NoteRenameAckMessage{
+		LastTime: newNote.UpdatedTimestamp,
+		Path:     newNote.Path,
+		PathHash: newNote.PathHash,
+	}).WithVault(params.Vault), string(dto.NoteRenameAck))
 	c.BroadcastResponse(code.Success.WithData(
 		dto.NoteSyncRenameMessage{
 			Path:             newNote.Path,
@@ -585,10 +614,11 @@ func (h *NoteWSHandler) NoteRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 	pkgapp.NoteModifyLog(c.TraceID, c.User.UID, "NoteRePush", params.Path, params.Vault)
 
 	uid := c.User.UID
-	note, err := h.App.GetNoteService(c.ClientName, c.ClientVersion).Get(c.Context(), uid, params)
+	note, err := h.App.GetNoteService(c.ClientType, c.ClientName, c.ClientVersion).Get(c.Context(), uid, params)
 	if err != nil {
-		h.respondError(c, code.ErrorNoteNotFound, err, "websocket_router.note.NoteRePush.Get")
-		return
+		h.App.Logger().Debug("websocket_router.note.NoteRePush.Get: record not found or error, proceeding to send delete",
+			zap.String(logger.FieldTraceID, c.TraceID),
+			zap.Error(err))
 	}
 
 	if note != nil && note.Action != "delete" {
@@ -604,7 +634,14 @@ func (h *NoteWSHandler) NoteRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 			},
 		).WithVault(params.Vault), dto.NoteSyncModify)
 	} else {
-		c.ToResponse(code.ErrorNoteNotFound)
+		// If note not found, send delete message to client to clean up local unauthorized creation
+		// 如果未找到笔记，则向客户端发送删除消息，以清理本地未授权的创建
+		c.ToResponse(code.Success.WithData(
+			dto.NoteSyncDeleteMessage{
+				Path:     params.Path,
+				PathHash: params.PathHash,
+			},
+		).WithVault(params.Vault), dto.NoteSyncDelete)
 	}
 
 }
@@ -640,13 +677,17 @@ func (h *NoteWSHandler) NoteSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 
 	ctx := c.Context()
 
-	noteSvc := h.App.GetNoteService(c.ClientName, c.ClientVersion)
+	noteSvc := h.App.GetNoteService(c.ClientType, c.ClientName, c.ClientVersion)
 
 	pkgapp.NoteModifyLog(c.TraceID, c.User.UID, "NoteSync", "", params.Vault)
 
 	// Check and create vault, internally uses SF to merge concurrent requests, avoiding duplicate creation issues
 	// 检查并创建仓库，内部使用SF合并并发请求, 避免重复创建问题
 	h.App.VaultService.GetOrCreate(ctx, c.User.UID, params.Vault)
+
+	// Record sync start time before querying to avoid missing writes that occur during query processing.
+	// 查询前记录同步开始时间，防止查询处理期间的写入被遗漏（经典增量同步快照时间戳方案）。
+	syncStartTime := timex.Now().UnixMilli()
 
 	list, err := noteSvc.ListByLastTime(ctx, c.User.UID, params)
 
@@ -680,6 +721,8 @@ func (h *NoteWSHandler) NoteSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 	// Handle notes deleted by client
 	// 处理客户端删除的笔记
 	if len(params.DelNotes) > 0 {
+		hasWritePermission := pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType, "note_w")
+
 		for _, delNote := range params.DelNotes {
 			// Check if note exists before deleting
 			// 删除前检查笔记是否存在
@@ -692,6 +735,14 @@ func (h *NoteWSHandler) NoteSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 			// If note exists, execute delete
 			// 如果笔记存在，执行删除
 			if err == nil && checkNote != nil && checkNote.Action != "delete" {
+				if !hasWritePermission {
+					h.App.Logger().Warn("websocket_router.note.NoteSync: permission denied for deletion",
+						zap.String(logger.FieldTraceID, c.TraceID),
+						zap.Int64(logger.FieldUID, c.User.UID),
+						zap.String(logger.FieldPath, delNote.Path))
+					continue
+				}
+
 				delParams := &dto.NoteDeleteRequest{
 					Vault:    params.Vault,
 					Path:     delNote.Path,
@@ -715,11 +766,12 @@ func (h *NoteWSHandler) NoteSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 				// 将删除消息广播给其他客户端
 				c.BroadcastResponse(code.Success.WithData(
 					dto.NoteSyncDeleteMessage{
-						Path:     note.Path,
-						PathHash: note.PathHash,
-						Ctime:    note.Ctime,
-						Mtime:    note.Mtime,
-						Size:     note.Size,
+						Path:             note.Path,
+						PathHash:         note.PathHash,
+						Ctime:            note.Ctime,
+						Mtime:            note.Mtime,
+						Size:             note.Size,
+						UpdatedTimestamp: note.UpdatedTimestamp,
 					},
 				).WithVault(params.Vault), true, dto.NoteSyncDelete)
 
@@ -739,11 +791,12 @@ func (h *NoteWSHandler) NoteSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 				// 使用现有信息(Path/PathHash)广播删除
 				c.BroadcastResponse(code.Success.WithData(
 					dto.NoteSyncDeleteMessage{
-						Path:     delNote.Path,
-						PathHash: delNote.PathHash,
-						Ctime:    0,
-						Mtime:    0,
-						Size:     0,
+						Path:             delNote.Path,
+						PathHash:         delNote.PathHash,
+						Ctime:            0,
+						Mtime:            0,
+						Size:             0,
+						UpdatedTimestamp: 0,
 					},
 				).WithVault(params.Vault), true, dto.NoteSyncDelete)
 			}
@@ -938,11 +991,10 @@ func (h *NoteWSHandler) NoteSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 		}
 	}
 
-	// Use current time as lastTime regardless of whether list is empty,
-	// ensuring lastTime > all returned notes' updated_timestamp (mirrors FolderSync design)
-	// 无论 list 是否为空，均取当前时间作为 lastTime，
-	// 确保 lastTime > 所有返回笔记的 updated_timestamp（与 FolderSync 保持一致）
-	lastTime = timex.Now().UnixMilli()
+	// Use syncStartTime (recorded before query) as lastTime to prevent writes that occurred
+	// during query processing from being permanently missed on the next incremental sync.
+	// 使用查询前记录的 syncStartTime 作为 lastTime，防止查询处理期间的写入在下次增量同步时被永久遗漏。
+	lastTime = syncStartTime
 	if len(cNotesKeys) > 0 {
 		for pathHash := range cNotesKeys {
 			note := cNotes[pathHash]

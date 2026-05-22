@@ -1,4 +1,4 @@
-# sqlite3
+-- sqlite3
 PRAGMA foreign_keys = false;
 
 -- ----------------------------
@@ -55,6 +55,8 @@ CREATE TABLE "note" (
     "content_last_snapshot_hash" text NOT NULL DEFAULT '',
     "version" integer DEFAULT 0,
     "client_name" text NOT NULL DEFAULT '',
+    "client_type" text NOT NULL DEFAULT '',
+    "client_version" text NOT NULL DEFAULT '',
     "size" integer DEFAULT 0,
     "ctime" integer DEFAULT 0,
     "mtime" integer DEFAULT 0,
@@ -86,6 +88,8 @@ CREATE TABLE "note_history" (
     "content_hash" text NOT NULL DEFAULT '',
     "diff_patch" text DEFAULT '',
     "client_name" text DEFAULT '',
+    "client_type" text DEFAULT '',
+    "client_version" text DEFAULT '',
     "version" integer DEFAULT 0,
     "created_at" datetime DEFAULT NULL,
     "updated_at" datetime DEFAULT NULL
@@ -139,6 +143,7 @@ CREATE TABLE "setting" (
     "id" integer PRIMARY KEY AUTOINCREMENT,
     "vault_id" integer NOT NULL DEFAULT 0,
     "action" text DEFAULT '',
+    "rename" integer DEFAULT 0,
     "path" text DEFAULT '',
     "path_hash" text DEFAULT '',
     "content" text DEFAULT '',
@@ -287,6 +292,8 @@ CREATE TABLE "backup_config" (
     "last_status" integer DEFAULT 0,
     -- 0: Idle, 1: Running, 2: Success, 3: Failed, 4: Stopped, 5: Success but no update
     "last_message" text DEFAULT '',
+    "password_mode" integer DEFAULT 0, -- 0: None, 1: Fixed, 2: Random
+    "password_value" text DEFAULT '',
     "created_at" datetime DEFAULT NULL,
     "updated_at" datetime DEFAULT NULL
 );
@@ -317,6 +324,7 @@ CREATE TABLE "backup_history" (
     "message" text DEFAULT '',
     "file_path" text DEFAULT '',
     -- remote path/key
+    "password" text DEFAULT '',
     "created_at" datetime DEFAULT NULL,
     "updated_at" datetime DEFAULT NULL
 );
@@ -354,6 +362,10 @@ CREATE TABLE "git_sync_config" (
     -- 0: 闲置, 1: 运行中, 2: 成功, 3: 失败
     "last_message" text DEFAULT '',
     -- 同步结果或错误信息
+    "include_config" integer DEFAULT 0,
+    -- 是否开启配置同步
+    "config_sync_rules" text DEFAULT '',
+    -- 存储规则列表的 JSON 数组 (例如 [".obsidian/appearance.json", ".obsidian/plugins/"])
     "created_at" datetime DEFAULT NULL,
     "updated_at" datetime DEFAULT NULL
 );
@@ -381,3 +393,76 @@ CREATE TABLE "git_sync_history" (
 CREATE INDEX "idx_git_sync_history_uid" ON "git_sync_history" ("uid", "created_at" DESC);
 
 CREATE INDEX "idx_git_sync_history_config_id" ON "git_sync_history" ("config_id");
+
+-- ----------------------------
+-- Table structure for sync_log
+-- ----------------------------
+DROP TABLE IF EXISTS "sync_log";
+
+CREATE TABLE "sync_log" (
+    "id"             integer PRIMARY KEY AUTOINCREMENT,
+    "uid"            integer NOT NULL DEFAULT 0,
+    "vault_id"       integer NOT NULL DEFAULT 0,
+    "type"           text NOT NULL DEFAULT '',  -- 'note', 'file', 'setting', 'folder'
+    "action"         text NOT NULL DEFAULT '',  -- 'create', 'modify', 'soft_delete', 'delete', 'rename', 'restore'
+    "changed_fields" text NOT NULL DEFAULT '',  -- 逗号分隔变更字段，如 'content,mtime' / 'mtime' / 'path'
+    "path"           text DEFAULT '',
+    "path_hash"      text DEFAULT '',
+    "size"           integer DEFAULT 0,
+    "client_name"    text DEFAULT '',
+    "client_type"    text DEFAULT '',
+    "client_version" text DEFAULT '',
+    "status"         integer DEFAULT 1,         -- 1: success, 2: failed
+    "message"        text DEFAULT '',
+    "created_at"     datetime DEFAULT NULL
+);
+
+CREATE INDEX "idx_sync_log_uid_created_at"  ON "sync_log" ("uid", "created_at" DESC);
+CREATE INDEX "idx_sync_log_uid_type_action" ON "sync_log" ("uid", "type", "action");
+
+-- ----------------------------
+-- Table structure for auth_token
+-- ----------------------------
+DROP TABLE IF EXISTS "auth_token";
+
+CREATE TABLE "auth_token" (
+    "id" integer PRIMARY KEY AUTOINCREMENT,
+    "uid" integer NOT NULL DEFAULT 0,
+    "token_string" text NOT NULL DEFAULT '',
+    "scope" text NOT NULL DEFAULT '',
+    "client_type" text NOT NULL DEFAULT '',
+    "bound_ip" text NOT NULL DEFAULT '',
+    "user_agent" text NOT NULL DEFAULT '',
+    "vaults" text NOT NULL DEFAULT '',
+    "status" integer NOT NULL DEFAULT 1,
+    "issue_type" integer NOT NULL DEFAULT 1,
+    "last_used_at" datetime DEFAULT NULL,
+    "expired_at" datetime DEFAULT NULL,
+    "created_at" datetime DEFAULT NULL,
+    "updated_at" datetime DEFAULT NULL
+);
+
+CREATE INDEX "idx_auth_token_uid" ON "auth_token" ("uid");
+CREATE INDEX "idx_auth_token_token_string" ON "auth_token" ("token_string");
+
+-- ----------------------------
+-- Table structure for auth_token_log
+-- ----------------------------
+DROP TABLE IF EXISTS "auth_token_log";
+
+CREATE TABLE "auth_token_log" (
+    "id" integer PRIMARY KEY AUTOINCREMENT,
+    "token_id" integer NOT NULL DEFAULT 0,
+    "uid" integer NOT NULL DEFAULT 0,
+    "protocol" text NOT NULL DEFAULT '',
+    "client" text NOT NULL DEFAULT '',
+    "client_name" text DEFAULT '',
+    "client_version" text DEFAULT '',
+    "ip" text DEFAULT '',
+    "ua" text DEFAULT '',
+    "status_code" integer DEFAULT 0,
+    "created_at" datetime DEFAULT NULL
+);
+
+CREATE INDEX "idx_auth_token_log_token_id" ON "auth_token_log" ("token_id");
+CREATE INDEX "idx_auth_token_log_uid" ON "auth_token_log" ("uid");

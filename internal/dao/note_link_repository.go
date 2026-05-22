@@ -1,4 +1,5 @@
 // Package dao implements the data access layer
+// Package dao 实现数据访问层
 package dao
 
 import (
@@ -38,6 +39,7 @@ func init() {
 	})
 }
 
+// noteLink gets the note link query object
 // noteLink 获取笔记链接查询对象
 func (r *noteLinkRepository) noteLink(uid int64) *query.Query {
 	key := r.GetKey(uid)
@@ -158,6 +160,15 @@ func (r *noteLinkRepository) GetOutlinks(ctx context.Context, sourceNoteID, uid 
 		results = append(results, r.toDomain(m))
 	}
 	return results, nil
+}
+
+// DeleteByVaultID deletes all links for a vault
+func (r *noteLinkRepository) DeleteByVaultID(ctx context.Context, vaultID, uid int64) error {
+	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
+		nl := r.noteLink(uid).NoteLink
+		_, err := nl.WithContext(ctx).Where(nl.VaultID.Eq(vaultID)).Delete()
+		return err
+	})
 }
 
 // Ensure noteLinkRepository implements domain.NoteLinkRepository interface

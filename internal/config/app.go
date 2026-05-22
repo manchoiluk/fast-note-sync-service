@@ -27,6 +27,9 @@ type AppSettings struct {
 	// SoftDeleteRetentionTime retention time for soft deleted notes
 	// SoftDeleteRetentionTime 软删除笔记保留时间
 	SoftDeleteRetentionTime string `yaml:"soft-delete-retention-time" default:"7d"`
+	// SyncLogRetentionTime retention time for sync logs
+	// SyncLogRetentionTime 同步日志保留时间
+	SyncLogRetentionTime string `yaml:"sync-log-retention-time" default:"30d"`
 	// HistoryKeepVersions number of historical versions to keep, default 100
 	// HistoryKeepVersions 历史记录保留版本数，默认 100
 	HistoryKeepVersions int `yaml:"history-keep-versions" default:"100"`
@@ -59,7 +62,7 @@ type AppSettings struct {
 	WebSocketReadMaxPayloadSize   string `yaml:"ws-read-max-payload-size" default:"128MB"`
 	WebSocketWriteMaxPayloadSize  string `yaml:"ws-write-max-payload-size" default:"128MB"`
 	WebSocketParallelEnabled      bool   `yaml:"ws-parallel-enabled" default:"true"`
-	WebSocketParallelGolimit      int    `yaml:"ws-parallel-golimit" default:"8"`
+	WebSocketParallelGolimit      int    `yaml:"ws-parallel-golimit" default:"3"`
 	WebSocketCheckUtf8Enabled     bool   `yaml:"ws-check-utf8-enabled" default:"true"`
 	WebSocketCompressionEnabled   bool   `yaml:"ws-compression-enabled" default:"true"`
 	WebSocketCompressionLevel     int    `yaml:"ws-compression-level" default:"1"`
@@ -67,6 +70,9 @@ type AppSettings struct {
 	// PullSource data pull source: auto | github | cnb
 	// PullSource 数据拉取源：auto | github | cnb
 	PullSource string `yaml:"pull-source" default:"auto"`
+	// PullReleaseChannel update version channel: stable | beta
+	// PullReleaseChannel 更新版本通道：stable（正式版） | beta（测试版）
+	PullReleaseChannel string `yaml:"pull-release-channel" default:"stable"`
 
 	// ShortLink configurations
 	// 短链配置

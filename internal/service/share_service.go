@@ -8,8 +8,10 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,8 +27,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// attachmentRegex regular expression for attachment links
+// attachmentRegex 附件链接正则表达式
 var (
 	attachmentRegex = regexp.MustCompile(`!\[\[(.*?)\]\]`)
+	// markdownImageRegex regular expression for markdown images
+	// markdownImageRegex markdown 图片正则表达式
+	markdownImageRegex = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+	// htmlImageRegex regular expression for html images
+	// htmlImageRegex html 图片正则表达式
+	htmlImageRegex = regexp.MustCompile(`(?i)<img\b([^>]*?)\bsrc\s*=\s*(['"])(.*?)['"]([^>]*)>`)
 )
 
 // ShareService defines the share business service interface
@@ -167,45 +177,16 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 			mainType = "note"
 			noteIDStr := strconv.FormatInt(note.ID, 10)
 			resolvedResources["note"] = []string{noteIDStr}
-
-			// Resolve attachments in content ![[attachment path]]
-			// 解析内容中的附件 ![[附件路径]]
-			matches := attachmentRegex.FindAllStringSubmatch(note.Content, -1)
-			for _, match := range matches {
-				if len(match) > 1 {
-					inner := match[1]
-					// Extract resource path (remove parts after alias | and anchor #)
-					// 提取资源路径（移除别名 | 和锚点 # 之后的部分）
-					attPath := inner
-					if idx := strings.IndexAny(inner, "|#"); idx != -1 {
-						attPath = inner[:idx]
-					}
-					attPath = strings.TrimSpace(attPath)
-					if attPath == "" {
-						continue
-					}
-
-					var file *domain.File
-					var ferr error
-
-					// Strategy 1: Try exact match (full path hash)
-					// 策略 1: 尝试精确匹配（完整路径哈希）
-					attHash := util.EncodeHash32(attPath)
-					file, ferr = s.fileRepo.GetByPathHash(ctx, attHash, vaultID, uid)
-
-					// Strategy 2: Try suffix match (handle Obsidian shorthand paths)
-					// 策略 2: 尝试后缀匹配（处理 Obsidian 简写路径）
-					if (ferr != nil || file == nil) && !strings.Contains(attPath, "/") {
-						file, ferr = s.fileRepo.GetByPathLike(ctx, attPath, vaultID, uid)
-					}
-
-					if ferr == nil && file != nil && file.Action != domain.FileActionDelete {
-						fileIDStr := strconv.FormatInt(file.ID, 10)
-						// Avoid duplicate authorization
-						// 避免重复授权
-						if !util.Inarray(resolvedResources["file"], fileIDStr) {
-							resolvedResources["file"] = append(resolvedResources["file"], fileIDStr)
-						}
+			fileRefs, err := s.resolveSharedNoteFiles(ctx, uid, note.VaultID, note.Path, note.Content)
+			if err != nil {
+				s.logger.Warn("ShareGenerate resolveSharedNoteFiles failed", zap.Error(err), zap.String("notePath", note.Path))
+			} else {
+				for _, file := range fileRefs {
+					fileIDStr := strconv.FormatInt(file.ID, 10)
+					// Avoid duplicate authorization
+					// 避免重复授权
+					if !util.Inarray(resolvedResources["file"], fileIDStr) {
+						resolvedResources["file"] = append(resolvedResources["file"], fileIDStr)
 					}
 				}
 			}
@@ -234,8 +215,12 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 			expiry = d
 		}
 	}
+	// expiresAt expiration time
+	// expiresAt 过期时间
 	expiresAt := time.Now().Add(expiry)
 
+	// pwdMd5 password MD5
+	// pwdMd5 密码 MD5
 	pwdMd5 := ""
 	if password != "" {
 		pwdMd5 = util.EncodeMD5(password)
@@ -253,8 +238,8 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 		UpdatedAt: time.Now(),
 	}
 
-	// 幂等：若该资源已有 active 分享，先撤销，避免重复计数
 	// Idempotent: revoke any existing active share before creating a new one
+	// 幂等：若该资源已有 active 分享，先撤销，避免重复计数
 	if existing, err := s.repo.GetByRes(ctx, uid, mainType, mainID); err == nil && existing != nil {
 		_ = s.StopShare(ctx, uid, existing.ID)
 	}
@@ -299,6 +284,10 @@ func (s *shareService) VerifyShare(ctx context.Context, token string, rid string
 		return nil, domain.ErrShareCancelled
 	}
 
+	// 添加限速延迟防止暴力枚举攻击
+	time.Sleep(time.Millisecond * 100)
+
+	// Add password verification logic
 	// 增加密码校验逻辑
 	if share.Password != "" {
 		if password == "" {
@@ -443,8 +432,8 @@ func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string,
 
 	items := make([]*dto.ShareListItem, 0, len(shares))
 
-	// 批量收集 noteIDs 和 fileIDs，避免 N+1 查询
 	// Collect noteIDs and fileIDs in bulk to avoid N+1 queries
+	// 批量收集 noteIDs 和 fileIDs，避免 N+1 查询
 	var noteIDs, fileIDs []int64
 	for _, share := range shares {
 		switch share.ResType {
@@ -455,8 +444,8 @@ func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string,
 		}
 	}
 
-	// 批量查询 notes，建立 id→note 映射
 	// Batch query notes and build id→note map
+	// 批量查询 notes，建立 id→note 映射
 	noteMap := make(map[int64]*domain.Note)
 	if len(noteIDs) > 0 {
 		notes, err := s.noteRepo.ListByIDs(ctx, noteIDs, uid)
@@ -481,8 +470,8 @@ func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string,
 		}
 	}
 
-	// 查询 vault 名称（vault 数量极少，按需缓存）
 	// Query vault names on demand with local cache (vault count is always small)
+	// 查询 vault 名称（vault 数量极少，按需缓存）
 	vaultNameCache := make(map[int64]string)
 
 	for _, share := range shares {
@@ -500,15 +489,15 @@ func (s *shareService) ListShares(ctx context.Context, uid int64, sortBy string,
 			IsPassword:   share.Password != "",
 		}
 
-		// 生成 Token 并拼接 URL /ResID/token
 		// Generate Token and concatenate URL /ResID/token
+		// 生成 Token 并拼接 URL /ResID/token
 		token, err := s.tokenManager.ShareGenerate(share.ID, uid, share.Resources)
 		if err == nil {
 			item.URL = "/share/" + strconv.FormatInt(share.ResID, 10) + "/" + token
 		}
 
-		// 从预加载的 map 中回填标题，无额外查询
 		// Fill title from preloaded maps, no extra DB queries
+		// 从预加载的 map 中回填标题，无额外查询
 		switch share.ResType {
 		case "note":
 			if note, ok := noteMap[share.ResID]; ok && note.Action != domain.NoteActionDelete {
@@ -722,6 +711,22 @@ func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, not
 		CreatedAt:        timex.Time(note.CreatedAt),
 	}
 
+	fileRefs, err := s.resolveSharedNoteFiles(ctx, shareEntity.UID, note.VaultID, note.Path, noteDTO.Content)
+	if err != nil {
+		s.logger.Warn("GetSharedNote resolveSharedNoteFiles failed", zap.Error(err), zap.String("notePath", note.Path))
+	}
+
+	if len(fileRefs) > 0 {
+		updatedResources, changed := mergeShareFileResources(shareEntity.Resources, fileRefs)
+		if changed {
+			if err := s.repo.UpdateResources(ctx, shareEntity.UID, shareEntity.SID, updatedResources); err != nil {
+				s.logger.Warn("GetSharedNote UpdateResources failed", zap.Error(err), zap.Int64("shareID", shareEntity.SID))
+			} else {
+				shareEntity.Resources = updatedResources
+			}
+		}
+	}
+
 	// Handle Obsidian attachment embedded tags ![[...]]
 	// 处理 Obsidian 附件嵌入标签 ![[...]]
 	newContent := attachmentRegex.ReplaceAllStringFunc(noteDTO.Content, func(match string) string {
@@ -734,6 +739,7 @@ func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, not
 		rawPath := inner
 		options := ""
 
+		// Extract resource path (remove part after alias | and anchor #)
 		// 提取资源路径（移除别名 | 和锚点 # 之后的部分）
 		if idx := strings.IndexAny(inner, "|#"); idx != -1 {
 			rawPath = inner[:idx]
@@ -746,17 +752,12 @@ func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, not
 			return match
 		}
 
-		// Search for file ID
-		// 查找文件 ID
-		file, err := s.fileRepo.GetByPathLike(ctx, rawPath, note.VaultID, shareEntity.UID)
-		if err != nil || file == nil {
+		file := fileRefs[rawPath]
+		if file == nil {
 			return match
 		}
 
-		apiUrl := "/api/share/file?id=" + strconv.FormatInt(file.ID, 10) + "&share_token=" + shareToken
-		if password != "" {
-			apiUrl += "&password=" + password
-		}
+		apiUrl := buildSharedFileAPIURL(file.ID, shareToken, password)
 		lowerPath := strings.ToLower(file.Path)
 		ext := filepath.Ext(lowerPath)
 
@@ -786,9 +787,322 @@ func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, not
 			return `<a href="` + apiUrl + `" target="_blank">📎 ` + rawPath + `</a>`
 		}
 	})
+	newContent = rewriteMarkdownImageLinks(newContent, fileRefs, shareToken, password)
+	newContent = rewriteHTMLImageSources(newContent, fileRefs, shareToken, password)
 	noteDTO.Content = newContent
 
 	return noteDTO, nil
+}
+
+func (s *shareService) resolveSharedNoteFiles(ctx context.Context, uid int64, vaultID int64, notePath string, content string) (map[string]*domain.File, error) {
+	rawRefs := extractSharedNoteFileRefs(content)
+	if len(rawRefs) == 0 {
+		return map[string]*domain.File{}, nil
+	}
+
+	result := make(map[string]*domain.File, len(rawRefs))
+	for _, rawRef := range rawRefs {
+		file, err := s.resolveSharedFileReference(ctx, uid, vaultID, notePath, rawRef)
+		if err != nil {
+			return nil, err
+		}
+		if file != nil {
+			result[rawRef] = file
+		}
+	}
+	return result, nil
+}
+
+func (s *shareService) resolveSharedFileReference(ctx context.Context, uid int64, vaultID int64, notePath string, rawRef string) (*domain.File, error) {
+	ref := strings.TrimSpace(rawRef)
+	if !isLocalSharePath(ref) {
+		return nil, nil
+	}
+
+	for _, candidate := range buildSharePathCandidates(notePath, ref) {
+		file, err := s.fileRepo.GetByPath(ctx, candidate, vaultID, uid)
+		if err == nil && file != nil && file.Action != domain.FileActionDelete {
+			return file, nil
+		}
+	}
+
+	normalizedRef := normalizeShareVaultPath(ref)
+	if normalizedRef != "" && !strings.Contains(normalizedRef, "/") {
+		file, err := s.fileRepo.GetByPathLike(ctx, normalizedRef, vaultID, uid)
+		if err == nil && file != nil && file.Action != domain.FileActionDelete {
+			return file, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func extractSharedNoteFileRefs(content string) []string {
+	seen := make(map[string]struct{})
+	refs := make([]string, 0)
+
+	for _, match := range attachmentRegex.FindAllStringSubmatch(content, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		ref := extractObsidianEmbedPath(match[1])
+		if ref == "" || !isLocalSharePath(ref) {
+			continue
+		}
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		refs = append(refs, ref)
+	}
+
+	for _, match := range markdownImageRegex.FindAllStringSubmatch(content, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		ref, _, _ := parseMarkdownLinkTarget(match[2])
+		ref = strings.TrimSpace(ref)
+		if ref == "" || !isLocalSharePath(ref) {
+			continue
+		}
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		refs = append(refs, ref)
+	}
+
+	for _, match := range htmlImageRegex.FindAllStringSubmatch(content, -1) {
+		if len(match) < 4 {
+			continue
+		}
+		ref := strings.TrimSpace(match[3])
+		if ref == "" || !isLocalSharePath(ref) {
+			continue
+		}
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		refs = append(refs, ref)
+	}
+
+	return refs
+}
+
+func extractObsidianEmbedPath(inner string) string {
+	rawPath := inner
+	if idx := strings.IndexAny(inner, "|#"); idx != -1 {
+		rawPath = inner[:idx]
+	}
+	return strings.TrimSpace(rawPath)
+}
+
+func parseMarkdownLinkTarget(raw string) (target string, start int, end int) {
+	start = 0
+	for start < len(raw) {
+		switch raw[start] {
+		case ' ', '\t', '\n':
+			start++
+		default:
+			goto targetStart
+		}
+	}
+	return "", -1, -1
+
+targetStart:
+	if raw[start] == '<' {
+		end = strings.IndexByte(raw[start+1:], '>')
+		if end == -1 {
+			return "", -1, -1
+		}
+		end += start + 2
+		return raw[start+1 : end-1], start, end
+	}
+
+	end = len(raw)
+	escaped := false
+	for i := start; i < len(raw); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch raw[i] {
+		case '\\':
+			escaped = true
+		case ' ', '\t', '\n':
+			end = i
+			return raw[start:end], start, end
+		}
+	}
+
+	return raw[start:end], start, end
+}
+
+func rewriteMarkdownImageLinks(content string, fileRefs map[string]*domain.File, shareToken string, password string) string {
+	return markdownImageRegex.ReplaceAllStringFunc(content, func(match string) string {
+		submatches := markdownImageRegex.FindStringSubmatch(match)
+		if len(submatches) < 3 {
+			return match
+		}
+
+		target, start, end := parseMarkdownLinkTarget(submatches[2])
+		if target == "" || start < 0 || end < 0 {
+			return match
+		}
+
+		file := fileRefs[strings.TrimSpace(target)]
+		if file == nil {
+			return match
+		}
+
+		replacementTarget := buildSharedFileAPIURL(file.ID, shareToken, password)
+		rawTarget := submatches[2][start:end]
+		if strings.HasPrefix(rawTarget, "<") && strings.HasSuffix(rawTarget, ">") {
+			replacementTarget = "<" + replacementTarget + ">"
+		}
+
+		return "![" + submatches[1] + "](" + submatches[2][:start] + replacementTarget + submatches[2][end:] + ")"
+	})
+}
+
+func rewriteHTMLImageSources(content string, fileRefs map[string]*domain.File, shareToken string, password string) string {
+	return htmlImageRegex.ReplaceAllStringFunc(content, func(match string) string {
+		submatches := htmlImageRegex.FindStringSubmatch(match)
+		if len(submatches) < 5 {
+			return match
+		}
+
+		file := fileRefs[strings.TrimSpace(submatches[3])]
+		if file == nil {
+			return match
+		}
+
+		return "<img" + submatches[1] + "src=" + submatches[2] + buildSharedFileAPIURL(file.ID, shareToken, password) + submatches[2] + submatches[4] + ">"
+	})
+}
+
+func buildSharedFileAPIURL(fileID int64, shareToken string, password string) string {
+	apiURL := "/api/share/file?id=" + strconv.FormatInt(fileID, 10) + "&share_token=" + shareToken
+	if password != "" {
+		apiURL += "&password=" + password
+	}
+	return apiURL
+}
+
+func mergeShareFileResources(resources map[string][]string, fileRefs map[string]*domain.File) (map[string][]string, bool) {
+	merged := cloneShareResources(resources)
+	allowed := make(map[string]struct{}, len(merged["file"]))
+	for _, id := range merged["file"] {
+		allowed[id] = struct{}{}
+	}
+
+	changed := false
+	for _, file := range fileRefs {
+		id := strconv.FormatInt(file.ID, 10)
+		if _, ok := allowed[id]; ok {
+			continue
+		}
+		merged["file"] = append(merged["file"], id)
+		allowed[id] = struct{}{}
+		changed = true
+	}
+
+	if changed {
+		sort.Strings(merged["file"])
+	}
+
+	return merged, changed
+}
+
+func cloneShareResources(resources map[string][]string) map[string][]string {
+	cloned := make(map[string][]string, len(resources))
+	for key, values := range resources {
+		cloned[key] = append([]string(nil), values...)
+	}
+	return cloned
+}
+
+func buildSharePathCandidates(notePath string, rawRef string) []string {
+	ref := strings.TrimSpace(strings.ReplaceAll(rawRef, "\\", "/"))
+	if ref == "" || !isLocalSharePath(ref) {
+		return nil
+	}
+
+	candidates := make([]string, 0, 2)
+	addCandidate := func(candidate string) {
+		candidate = normalizeShareVaultPath(candidate)
+		if candidate == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == candidate {
+				return
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+
+	noteDir := normalizeShareVaultPath(path.Dir(strings.ReplaceAll(notePath, "\\", "/")))
+	if noteDir == "." {
+		noteDir = ""
+	}
+	if noteDir != "" {
+		addCandidate(path.Join(noteDir, ref))
+	} else {
+		addCandidate(ref)
+	}
+	if strings.Contains(ref, "/") && !strings.HasPrefix(ref, "./") && !strings.HasPrefix(ref, "../") {
+		addCandidate(ref)
+	}
+
+	return candidates
+}
+
+func normalizeShareVaultPath(p string) string {
+	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
+	p = strings.TrimPrefix(p, "./")
+	p = strings.TrimPrefix(p, "/")
+	if p == "" {
+		return ""
+	}
+
+	cleaned := path.Clean(p)
+	if cleaned == "." || cleaned == "/" || strings.HasPrefix(cleaned, "../") {
+		return ""
+	}
+	return strings.TrimPrefix(cleaned, "/")
+}
+
+func isLocalSharePath(ref string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+
+	lowerRef := strings.ToLower(ref)
+	switch {
+	case strings.HasPrefix(ref, "#"):
+		return false
+	case strings.HasPrefix(ref, "/"):
+		return false
+	case strings.HasPrefix(lowerRef, "http://"):
+		return false
+	case strings.HasPrefix(lowerRef, "https://"):
+		return false
+	case strings.HasPrefix(lowerRef, "//"):
+		return false
+	case strings.HasPrefix(lowerRef, "data:"):
+		return false
+	case strings.HasPrefix(lowerRef, "mailto:"):
+		return false
+	case strings.HasPrefix(lowerRef, "tel:"):
+		return false
+	case strings.HasPrefix(lowerRef, "obsidian://"):
+		return false
+	default:
+		return true
+	}
 }
 
 // GetSharedFile retrieves shared file content
@@ -835,9 +1149,9 @@ func (s *shareService) GetSharedFile(ctx context.Context, shareToken string, fil
 		contentType = http.DetectContentType(content)
 	}
 
-	// Compute etag in real-time
-	// 实时计算 etag
-	etag = util.EncodeHash32(string(content))
+	// Compute etag in real-time using byte-based hash for consistency with binary files
+	// 使用基于字节的哈希实时计算 etag，确保与二进制文件一致
+	etag = util.EncodeHash32Bytes(content)
 
 	return content, contentType, file.Mtime, etag, file.Path, nil
 

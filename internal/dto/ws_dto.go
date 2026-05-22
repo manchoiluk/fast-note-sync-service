@@ -92,6 +92,9 @@ const (
 	// SettingReceiveClear clear all settings request
 	// SettingReceiveClear 清理所有设置请求
 	SettingReceiveClear WebSocketReceiveAction = "SettingClear"
+	// SettingReceiveRePush setting missing pull request
+	// SettingReceiveRePush 配置缺失请求拉取
+	SettingReceiveRePush WebSocketReceiveAction = "SettingRePush"
 )
 
 const (
@@ -109,6 +112,15 @@ const (
 	// FolderRename folder rename action
 	// FolderRename 文件夹重命名动作
 	FolderSyncRename WebSocketSendAction = "FolderSyncRename"
+	// FolderModifyAck folder modify operation ack
+	// FolderModifyAck 文件夹修改操作 ack
+	FolderModifyAck WebSocketSendAction = "FolderModifyAck"
+	// FolderRenameAck folder rename operation ack
+	// FolderRenameAck 文件夹重命名操作 ack
+	FolderRenameAck WebSocketSendAction = "FolderRenameAck"
+	// FolderDeleteAck folder delete operation ack
+	// FolderDeleteAck 文件夹删除操作 ack
+	FolderDeleteAck WebSocketSendAction = "FolderDeleteAck"
 
 	// ---------------- Note ----------------
 
@@ -130,6 +142,15 @@ const (
 	// NoteSyncNeedPush indicates client needs to push note content
 	// NoteSyncNeedPush 表示客户端需要推送笔记内容
 	NoteSyncNeedPush WebSocketSendAction = "NoteSyncNeedPush"
+	// NoteModifyAck note modify operation ack
+	// NoteModifyAck 笔记修改操作 ack
+	NoteModifyAck WebSocketSendAction = "NoteModifyAck"
+	// NoteRenameAck note rename operation ack
+	// NoteRenameAck 笔记重命名操作 ack
+	NoteRenameAck WebSocketSendAction = "NoteRenameAck"
+	// NoteDeleteAck note delete operation ack
+	// NoteDeleteAck 笔记删除操作 ack
+	NoteDeleteAck WebSocketSendAction = "NoteDeleteAck"
 
 	// ---------------- File ----------------
 
@@ -160,6 +181,9 @@ const (
 	// FileUploadAck file upload complete ack
 	// FileUploadAck 文件上传完成 ack
 	FileUploadAck WebSocketSendAction = "FileUploadAck"
+	// FileDeleteAck file delete operation ack
+	// FileDeleteAck 文件删除操作 ack
+	FileDeleteAck WebSocketSendAction = "FileDeleteAck"
 
 	// ---------------- Setting ----------------
 
@@ -181,6 +205,12 @@ const (
 	// SettingSyncClear sync clear all settings
 	// SettingSyncClear 同步清理所有设置
 	SettingSyncClear WebSocketSendAction = "SettingSyncClear"
+	// SettingModifyAck setting modify operation ack
+	// SettingModifyAck 设置修改操作 ack
+	SettingModifyAck WebSocketSendAction = "SettingModifyAck"
+	// SettingDeleteAck setting delete operation ack
+	// SettingDeleteAck 设置删除操作 ack
+	SettingDeleteAck WebSocketSendAction = "SettingDeleteAck"
 
 	// ---------------- Share ----------------
 
@@ -190,9 +220,9 @@ const (
 )
 
 // WSQueuedMessage represents a message item to be sent
-// Used to collect messages during sync process, and sent together in SyncEnd message
+// WSQueuedMessage used to collect messages during sync process, and sent together in SyncEnd message
 // WSQueuedMessage 表示待发送的消息项
-// 用于在同步过程中收集消息,在 SyncEnd 消息中统一合并发送
+// WSQueuedMessage 用于在同步过程中收集消息,在 SyncEnd 消息中统一合并发送
 type WSQueuedMessage struct {
 	Action  string `json:"action"`  // Message action/type // 消息动作/类型
 	Data    any    `json:"data"`    // Message data payload // 消息数据负载

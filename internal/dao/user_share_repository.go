@@ -13,12 +13,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// userShareRepository implements domain.UserShareRepository interface
 // userShareRepository 实现 domain.UserShareRepository 接口
 type userShareRepository struct {
 	dao             *Dao
 	customPrefixKey string
 }
 
+// NewUserShareRepository creates UserShareRepository instance
 // NewUserShareRepository 创建 UserShareRepository 实例
 func NewUserShareRepository(dao *Dao) domain.UserShareRepository {
 	return &userShareRepository{dao: dao, customPrefixKey: "user_share_"}
@@ -37,6 +39,7 @@ func init() {
 	})
 }
 
+// userShare gets the share query object
 // userShare 获取分享查询对象
 func (r *userShareRepository) userShare(uid int64) *query.Query {
 	key := r.GetKey(uid)
@@ -45,6 +48,8 @@ func (r *userShareRepository) userShare(uid int64) *query.Query {
 	}, key+"#userShare", key)
 }
 
+// toDomain converts database model to domain model
+// toDomain 将数据库模型转换为领域模型
 func (r *userShareRepository) toDomain(m *model.UserShare) *domain.UserShare {
 	if m == nil {
 		return nil
@@ -69,6 +74,8 @@ func (r *userShareRepository) toDomain(m *model.UserShare) *domain.UserShare {
 	}
 }
 
+// toModel converts domain model to database model
+// toModel 将领域模型转换为数据库模型
 func (r *userShareRepository) toModel(d *domain.UserShare) *model.UserShare {
 	if d == nil {
 		return nil
@@ -99,7 +106,7 @@ func (r *userShareRepository) Create(ctx context.Context, uid int64, share *doma
 		if err := us.WithContext(ctx).Create(m); err != nil {
 			return err
 		}
-		share.ID = m.ID // 回填生成的 ID
+		share.ID = m.ID // Backfill generated ID // 回填生成的 ID
 		return nil
 	})
 }
@@ -125,6 +132,7 @@ func (r *userShareRepository) GetByPath(ctx context.Context, uid int64, vaultID 
 	}
 
 	// 3. Get UserShare (Triggers UserShare migration via GetByRes -> userShare(uid))
+	// 3. Get UserShare (通过 GetByRes -> userShare(uid) 触发 UserShare 迁移)
 	return r.GetByRes(ctx, uid, "note", note.ID)
 }
 
@@ -135,6 +143,18 @@ func (r *userShareRepository) GetByRes(ctx context.Context, uid int64, resType s
 		return nil, err
 	}
 	return r.toDomain(m), nil
+}
+
+func (r *userShareRepository) UpdateResources(ctx context.Context, uid int64, id int64, resources map[string][]string) error {
+	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
+		us := r.userShare(uid).UserShare
+		resBytes, err := json.Marshal(resources)
+		if err != nil {
+			return err
+		}
+		_, err = us.WithContext(ctx).Where(us.ID.Eq(id)).Update(us.Res, string(resBytes))
+		return err
+	})
 }
 
 func (r *userShareRepository) UpdateStatus(ctx context.Context, uid int64, id int64, status int64) error {
@@ -167,6 +187,7 @@ func (r *userShareRepository) UpdateViewStats(ctx context.Context, uid int64, id
 func (r *userShareRepository) ListByUID(ctx context.Context, uid int64, sortBy string, sortOrder string, offset, limit int) ([]*domain.UserShare, error) {
 	us := r.userShare(uid).UserShare
 
+	// Whitelist sorting field validation
 	// 白名单验证排序字段
 	allowedFields := map[string]string{
 		"created_at": "created_at",
@@ -178,6 +199,7 @@ func (r *userShareRepository) ListByUID(ctx context.Context, uid int64, sortBy s
 		field = "created_at"
 	}
 
+	// Validate sorting order
 	// 验证排序方向
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
@@ -222,6 +244,7 @@ func (r *userShareRepository) CountByUID(ctx context.Context, uid int64) (int64,
 }
 
 // ListActiveNoteResIDs returns note res_ids for all active shares of a user
+// ListActiveNoteResIDs retrieves note res_id list for all active shares of a user (queries only user_shares table, no cross-database JOIN)
 // ListActiveNoteResIDs 查询该用户所有有效分享中 res_type='note' 的 res_id 列表（只查 user_shares 表，无跨库 JOIN）
 func (r *userShareRepository) ListActiveNoteResIDs(ctx context.Context, uid int64) ([]int64, error) {
 	us := r.userShare(uid).UserShare
@@ -238,6 +261,7 @@ func (r *userShareRepository) ListActiveNoteResIDs(ctx context.Context, uid int6
 	return ids, nil
 }
 
+// ListChangedNoteResIDs returns note share res_ids changed after since, grouped by status
 // ListChangedNoteResIDs 返回 updated_at > since 的 note 分享记录，按状态分组
 // ListChangedNoteResIDs returns note share res_ids changed after since, grouped by status
 func (r *userShareRepository) ListChangedNoteResIDs(ctx context.Context, uid int64, since time.Time) ([]int64, []int64, error) {
@@ -261,11 +285,13 @@ func (r *userShareRepository) ListChangedNoteResIDs(ctx context.Context, uid int
 }
 
 // MigrateResID updates res_id and resources JSON when a note/file is renamed (old ID → new ID).
-// MigrateResID 在笔记/文件重命名时更新分享记录的资源 ID 和资源列表（旧 ID → 新 ID）。
+// MigrateResID updates res_id and resources JSON when a note/file is renamed (old ID -> new ID).
+// MigrateResID 在笔记/文件重命名时更新分享记录的资源 ID 和资源列表（旧 ID -> 新 ID）。
 func (r *userShareRepository) MigrateResID(ctx context.Context, uid int64, oldResID int64, newResID int64) error {
 	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
 		us := r.userShare(uid).UserShare
 
+		// 1. Update res_id for all active shares pointing to oldResID
 		// 1. Update res_id for all active shares pointing to oldResID
 		// 1. 更新所有指向旧 ID 的有效分享的 res_id
 		_, err := us.WithContext(ctx).
@@ -275,6 +301,7 @@ func (r *userShareRepository) MigrateResID(ctx context.Context, uid int64, oldRe
 			return err
 		}
 
+		// 2. Update resources JSON: replace oldResID with newResID in all note/file arrays
 		// 2. Update resources JSON: replace oldResID with newResID in all note/file arrays
 		// 2. 更新资源 JSON：在 note/file 数组中将旧 ID 替换为新 ID
 		oldIDStr := strconv.FormatInt(oldResID, 10)
@@ -318,4 +345,27 @@ func (r *userShareRepository) MigrateResID(ctx context.Context, uid int64, oldRe
 	})
 }
 
+// DeleteByVaultID deletes all shares belonging to a vault (notes/files in that vault)
+// DeleteByVaultID 删除属于该仓库的所有分享记录（仓库下的笔记或文件）
+func (r *userShareRepository) DeleteByVaultID(ctx context.Context, vaultID, uid int64) error {
+	return r.dao.ExecuteWrite(ctx, uid, r, func(db *gorm.DB) error {
+		us := r.userShare(uid).UserShare
+
+		// 子查询：找到该仓库下的所有笔记 ID
+		subNote := db.Table("note").Select("id").Where("vault_id = ?", vaultID)
+		// 子查询：找到该仓库下的所有文件 ID
+		subFile := db.Table("file").Select("id").Where("vault_id = ?", vaultID)
+
+		// 删除笔记分享
+		if err := us.WithContext(ctx).UnderlyingDB().Where("res_type = ? AND res_id IN (?)", "note", subNote).Delete(&model.UserShare{}).Error; err != nil {
+			return err
+		}
+
+		// 删除文件分享
+		return us.WithContext(ctx).UnderlyingDB().Where("res_type = ? AND res_id IN (?)", "file", subFile).Delete(&model.UserShare{}).Error
+	})
+}
+
+// Ensure userShareRepository implements domain.UserShareRepository interface
+// 确保 userShareRepository 实现了 domain.UserShareRepository 接口
 var _ domain.UserShareRepository = (*userShareRepository)(nil)

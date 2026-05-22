@@ -73,7 +73,7 @@ func (h *NoteHandler) Get(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 	note, err := noteSvc.Get(ctx, uid, params)
 	if err != nil {
 		h.logError(ctx, "NoteHandler.Get", err)
@@ -83,7 +83,7 @@ func (h *NoteHandler) Get(c *gin.Context) {
 
 	// Parse ![[ ]] tags in content
 	// 解析内容中的 ![[ ]] 标签
-	fileLinks, err := h.App.FileService.ResolveEmbedLinks(ctx, uid, params.Vault, note.Content)
+	fileLinks, err := h.App.FileService.ResolveEmbedLinks(ctx, uid, params.Vault, note.Path, note.Content)
 	if err != nil {
 		h.App.Logger().Error("NoteHandler.Get FileResolveEmbedLinks err", zap.Error(err))
 	}
@@ -143,7 +143,7 @@ func (h *NoteHandler) List(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 	pager := pkgapp.NewPager(c)
 
 	notes, count, err := noteSvc.List(ctx, uid, params, pager)
@@ -219,7 +219,7 @@ func (h *NoteHandler) CreateOrUpdate(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 
 	// Check update
 	// 检查更新
@@ -299,7 +299,7 @@ func (h *NoteHandler) Delete(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 
 	// Check if note exists
 	// 检查笔记是否存在
@@ -373,7 +373,7 @@ func (h *NoteHandler) Restore(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 
 	// Check if note exists in trash
 	// 检查笔记是否存在于回收站
@@ -414,7 +414,7 @@ func (h *NoteHandler) Restore(c *gin.Context) {
 // @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
-// @Param params body dto.NotePatchFrontmatterRequest true "Frontmatter Modification Parameters"
+// @Param params body dto.NotePatchFrontmatterRequest  true "Frontmatter Modification Parameters"
 // @Success 200 {object} pkgapp.Res{data=dto.NoteDTO} "Success"
 // @Router /api/note/frontmatter [patch]
 func (h *NoteHandler) PatchFrontmatter(c *gin.Context) {
@@ -454,7 +454,7 @@ func (h *NoteHandler) PatchFrontmatter(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 	note, err := noteSvc.PatchFrontmatter(ctx, uid, params)
 	if err != nil {
 		h.logError(ctx, "NoteHandler.PatchFrontmatter", err)
@@ -514,7 +514,7 @@ func (h *NoteHandler) Append(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 	note, err := noteSvc.AppendContent(ctx, uid, params)
 	if err != nil {
 		h.logError(ctx, "NoteHandler.Append", err)
@@ -574,7 +574,7 @@ func (h *NoteHandler) Prepend(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 	note, err := noteSvc.PrependContent(ctx, uid, params)
 	if err != nil {
 		h.logError(ctx, "NoteHandler.Prepend", err)
@@ -634,7 +634,7 @@ func (h *NoteHandler) Replace(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 	result, err := noteSvc.ReplaceContent(ctx, uid, params)
 	if err != nil {
 		h.logError(ctx, "NoteHandler.Replace", err)
@@ -646,88 +646,6 @@ func (h *NoteHandler) Replace(c *gin.Context) {
 	if result.Note != nil {
 		h.WSS.BroadcastToUser(uid, code.Success.WithData(result.Note).WithVault(params.Vault), "NoteSyncModify")
 	}
-}
-
-// Move moves a note to a new path
-// @Summary Move note
-// @Description Move a note to a new path
-// @Tags Note
-// @Security UserAuthToken
-// @Param token header string true "Auth Token"
-// @Accept json
-// @Produce json
-// @Param params body dto.NoteMoveRequest true "Move Parameters"
-// @Success 200 {object} pkgapp.Res{data=dto.NoteDTO} "Success"
-// @Router /api/note/move [post]
-func (h *NoteHandler) Move(c *gin.Context) {
-	response := pkgapp.NewResponse(c)
-	params := &dto.NoteMoveRequest{}
-
-	// Parameter binding and validation
-	// 参数绑定和验证
-	valid, errs := pkgapp.BindAndValid(c, params)
-	if !valid {
-		h.App.Logger().Error("NoteHandler.Move.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
-		return
-	}
-
-	// Get UID
-	// 获取用户 ID
-	uid := pkgapp.GetUID(c)
-	if uid == 0 {
-		h.App.Logger().Error("NoteHandler.Move err uid=0")
-		response.ToResponse(code.ErrorInvalidUserAuthToken)
-		return
-	}
-
-	// Validate paths for directory traversal attacks
-	if !util.ValidatePath(params.Path) || !util.ValidatePath(params.Destination) {
-		response.ToResponse(code.ErrorInvalidPath)
-		return
-	}
-
-	// Apply default folder if configured
-	// if defaultFolder := h.App.Config().App.DefaultAPIFolder; defaultFolder != "" {
-	// 	params.Path = util.ApplyDefaultFolder(params.Path, defaultFolder)
-	// 	params.Destination = util.ApplyDefaultFolder(params.Destination, defaultFolder)
-	// }
-
-	// Calculate PathHash
-	// 计算 PathHash
-	if params.PathHash == "" {
-		params.PathHash = util.EncodeHash32(params.Path)
-	}
-
-	// Get request context
-	// 获取请求上下文
-	ctx := c.Request.Context()
-
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
-
-	// Get old note for broadcasting deletion event
-	// 获取旧笔记用于广播删除事件
-	oldNote, _ := noteSvc.Get(ctx, uid, &dto.NoteGetRequest{
-		Vault:    params.Vault,
-		Path:     params.Path,
-		PathHash: params.PathHash,
-	})
-
-	note, err := noteSvc.Move(ctx, uid, params)
-	if err != nil {
-		h.logError(ctx, "NoteHandler.Move", err)
-		apperrors.ErrorResponse(c, err)
-		return
-	}
-
-	response.ToResponse(code.Success.WithData(note))
-
-	// Broadcast WebSocket events: delete old path + create new path
-	// 广播 WebSocket 事件: 删除旧路径 + 新建新路径
-	if oldNote != nil {
-		h.WSS.BroadcastToUser(uid, code.Success.WithData(oldNote).WithVault(params.Vault), "NoteSyncDelete")
-	}
-	h.WSS.BroadcastToUser(uid, code.Success.WithData(note).WithVault(params.Vault), "NoteSyncModify")
 }
 
 // Rename renames a note
@@ -781,7 +699,7 @@ func (h *NoteHandler) Rename(c *gin.Context) {
 	// 获取请求上下文
 	ctx := c.Request.Context()
 
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 
 	oldNote, newNote, err := noteSvc.Rename(ctx, uid, params)
 	if err != nil {
@@ -960,7 +878,7 @@ func (h *NoteHandler) RecycleClear(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	noteSvc := h.App.GetNoteService(app.WebClientName, "")
+	noteSvc := h.App.GetNoteService(h.getClientInfo(c))
 	if err := noteSvc.RecycleClear(ctx, uid, params); err != nil {
 		h.logError(ctx, "NoteHandler.RecycleClear", err)
 		apperrors.ErrorResponse(c, err)

@@ -2,9 +2,11 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/haierkeys/fast-note-sync-service/pkg/code"
 	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 
 	"crypto/aes"
@@ -21,17 +23,17 @@ const DefaultTokenIssuer = "fast-note-sync-service"
 
 // TokenConfig defines Token manager configuration // TokenConfig 定义 Token 管理器的配置
 type TokenConfig struct {
-	SecretKey     string        `yaml:"secret-key"`         // JWT 签名密钥
-	Expiry        time.Duration `yaml:"expiry"`             // Token 过期时间，默认 365 天
-	ShareTokenKey string        `yaml:"share-token-key"`    // 分享专用签名密钥
-	ShareExpiry   time.Duration `yaml:"share-token-expiry"` // 分享专用过期时间
+	SecretKey     string        `yaml:"secret-key"`         // JWT signing key // JWT 签名密钥
+	Expiry        time.Duration `yaml:"expiry"`             // Token expiration time, defaults to 365 days // Token 过期时间，默认 365 天
+	ShareTokenKey string        `yaml:"share-token-key"`    // Dedicated signing key for sharing // 分享专用签名密钥
+	ShareExpiry   time.Duration `yaml:"share-token-expiry"` // Dedicated expiration time for sharing // 分享专用过期时间
 	Issuer        string        `yaml:"issuer"`             // Token issuer // Token 签发者
 }
 
 // TokenManager defines Token management interface // TokenManager 定义 Token 管理接口
 type TokenManager interface {
 	// User authentication related // 用户认证相关
-	Generate(uid int64, nickname, ip string) (string, error)
+	Generate(uid int64, nickname, ip string, tokenID int64, nonce string) (string, error)
 	Parse(token string) (*UserEntity, error)
 
 	// Resource sharing related // 资源分享相关
@@ -50,9 +52,10 @@ type tokenManager struct {
 // NewTokenManager creates a new TokenManager instance
 // NewTokenManager 创建一个新的 TokenManager 实例
 func NewTokenManager(cfg TokenConfig) TokenManager {
+	// Set default values
 	// 设置默认值
 	if cfg.Expiry == 0 {
-		cfg.Expiry = 365 * 24 * time.Hour // 默认 365 天
+		cfg.Expiry = 365 * 24 * time.Hour // Default 365 days // 默认 365 天
 	}
 	if cfg.Issuer == "" {
 		cfg.Issuer = DefaultTokenIssuer
@@ -71,7 +74,8 @@ type UserSelectEntity struct {
 type UserEntity struct {
 	UID      int64  `json:"uid"`
 	Nickname string `json:"nickname"`
-	IP       string `json:"ip"`
+	TokenID  int64  `json:"tokenId"` // 数据库中的 auth_token.id
+	Nonce    string `json:"nonce"`   // 令牌标识符，用于轮换校验
 	jwt.RegisteredClaims
 }
 
@@ -84,15 +88,14 @@ type ShareEntity struct {
 }
 
 // Generate generates a new JWT Token
-// Generate 生成一个新的 JWT Token
-func (t *tokenManager) Generate(uid int64, nickname, ip string) (string, error) {
-	expirationTime := time.Now().Add(t.config.Expiry)
+func (t *tokenManager) Generate(uid int64, nickname, _ string, tokenID int64, nonce string) (string, error) {
 	claims := &UserEntity{
 		UID:      uid,
 		Nickname: nickname,
-		IP:       ip,
+		TokenID:  tokenID,
+		Nonce:    nonce,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(t.config.Expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
 			Issuer:    t.config.Issuer,
@@ -133,22 +136,27 @@ func (t *tokenManager) Parse(token string) (*UserEntity, error) {
 func (t *tokenManager) ShareGenerate(shareID int64, uid int64, resources map[string][]string) (string, error) {
 	expirationTime := time.Unix(time.Now().Add(t.config.ShareExpiry).Unix(), 0)
 
+	// Prepare data (fixed 16 bytes): SID (6) + UID (3) + ExpiresAt (4) + Checksum (3)
 	// 准备数据 (固定 16 字节): SID (6) + UID (3) + ExpiresAt (4) + Checksum (3)
 	data := make([]byte, 16)
 
+	// SID: 6 bytes (0-5)
 	// SID: 6 字节 (0-5)
 	sidBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(sidBytes, uint64(shareID))
 	copy(data[0:6], sidBytes[2:8])
 
+	// UID: 3 bytes (6-8)
 	// UID: 3 字节 (6-8)
 	uidBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(uidBytes, uint64(uid))
 	copy(data[6:9], uidBytes[5:8])
 
+	// ExpiresAt: 4 bytes (9-12)
 	// ExpiresAt: 4 字节 (9-12)
 	binary.BigEndian.PutUint32(data[9:13], uint32(expirationTime.Unix()))
 
+	// Generate checksum: generate summary using Key + first 13 bytes, take first 3 bytes
 	// 生成校验和: 使用 Key + 前 13 字节生成摘要，取前 3 字节
 	key := sha256.Sum256([]byte(t.config.ShareTokenKey + "_" + util.GetMachineID()))
 	h := sha256.New()
@@ -162,6 +170,7 @@ func (t *tokenManager) ShareGenerate(shareID int64, uid int64, resources map[str
 		return "", err
 	}
 
+	// Execute single block encryption (16 bytes)
 	// 执行单块加密 (16 字节)
 	ciphertext := make([]byte, 16)
 	block.Encrypt(ciphertext, data)
@@ -178,6 +187,7 @@ func (t *tokenManager) ShareParse(tokenString string) (*ShareEntity, error) {
 		return nil, fmt.Errorf("invalid token format")
 	}
 
+	// Generate AES Key using ShareTokenKey + MachineID
 	// 使用 ShareTokenKey + MachineID 生成 AES Key
 	key := sha256.Sum256([]byte(t.config.ShareTokenKey + "_" + util.GetMachineID()))
 
@@ -186,10 +196,12 @@ func (t *tokenManager) ShareParse(tokenString string) (*ShareEntity, error) {
 		return nil, err
 	}
 
+	// Execute single block decryption
 	// 执行单块解密
 	data := make([]byte, 16)
 	block.Decrypt(data, ciphertext)
 
+	// Verify checksum
 	// 验证校验和
 	h := sha256.New()
 	h.Write(key[:])
@@ -200,16 +212,19 @@ func (t *tokenManager) ShareParse(tokenString string) (*ShareEntity, error) {
 		return nil, fmt.Errorf("invalid token checksum")
 	}
 
+	// Parse SID (6 bytes)
 	// 解析 SID (6 字节)
 	sidBytes := make([]byte, 8)
 	copy(sidBytes[2:8], data[0:6])
 	shareID := int64(binary.BigEndian.Uint64(sidBytes))
 
+	// Parse UID (3 bytes)
 	// 解析 UID (3 字节)
 	uidBytes := make([]byte, 8)
 	copy(uidBytes[5:8], data[6:9])
 	uid := int64(binary.BigEndian.Uint64(uidBytes))
 
+	// Parse ExpiresAt (4 bytes)
 	// 解析 ExpiresAt (4 字节)
 	expUnix := int64(binary.BigEndian.Uint32(data[9:13]))
 
@@ -246,6 +261,9 @@ func ParseTokenWithKey(tokenString string, secretKey string) (*UserEntity, error
 	})
 
 	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, code.ErrorTokenExpired
+		}
 		return nil, err
 	}
 
@@ -256,7 +274,18 @@ func ParseTokenWithKey(tokenString string, secretKey string) (*UserEntity, error
 	return claims, nil
 }
 
-// GetUid extracts the user ID from the request context.
+// GetTokenID extracts the token ID from the request context.
+func GetTokenID(ctx *gin.Context) (out int64) {
+	user, exist := ctx.Get("user_token")
+	if exist {
+		if userEntity, ok := user.(*UserEntity); ok {
+			out = userEntity.TokenID
+		}
+	}
+	return
+}
+
+// GetUID extracts the user ID from the request context.
 func GetUID(ctx *gin.Context) (out int64) {
 	user, exist := ctx.Get("user_token")
 	if exist {
@@ -279,14 +308,9 @@ func GetShareEntity(ctx *gin.Context) (out *ShareEntity) {
 }
 
 // GetIP extracts the user IP from the request context.
+// Deprecated: IP is now managed statefully in the database.
 func GetIP(ctx *gin.Context) (out string) {
-	user, exist := ctx.Get("user_token")
-	if exist {
-		if userEntity, ok := user.(*UserEntity); ok {
-			out = userEntity.IP
-		}
-	}
-	return
+	return ""
 }
 
 // SetTokenToContextWithKey sets Token to Context with specified key

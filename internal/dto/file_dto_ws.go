@@ -26,6 +26,7 @@ type FileSyncEndMessage struct {
 // FileSyncUploadMessage 定义服务端通知客户端需要上传文件的消息结构
 type FileSyncUploadMessage struct {
 	Path      string `json:"path" example:"Image.png"`        // File path // 文件路径
+	PathHash  string `json:"pathHash" example:"fhash123"`     // Path hash // 路径哈希值
 	SessionID string `json:"sessionId" example:"sess_123456"` // Session ID // 会话 ID
 	ChunkSize int64  `json:"chunkSize" example:"1048576"`     // Chunk size // 分块大小
 }
@@ -34,6 +35,7 @@ type FileSyncUploadMessage struct {
 // FileSyncDownloadMessage 定义服务端通知客户端准备下载文件的消息结构
 type FileSyncDownloadMessage struct {
 	Path        string `json:"path" example:"Image.png"`        // File path // 文件路径
+	ContentHash string `json:"contentHash" example:"chash456"`   // Content hash // 内容哈希
 	Ctime       int64  `json:"ctime" example:"1700000000"`      // Creation time // 创建时间
 	Mtime       int64  `json:"mtime" example:"1700000000"`      // Modification time // 修改时间
 	SessionID   string `json:"sessionId" example:"sess_789012"` // Session ID // 会话 ID
@@ -65,7 +67,9 @@ type FileSyncDeleteMessage struct {
 // FileRenameAckMessage ack message for file rename operation, carries server timestamp
 // FileRenameAckMessage 文件重命名操作 ack 消息，携带服务端时间戳
 type FileRenameAckMessage struct {
-	LastTime int64 `json:"lastTime"` // Server timestamp after rename // 重命名后的服务端时间戳
+	LastTime int64  `json:"lastTime"` // Server timestamp after rename // 重命名后的服务端时间戳
+	Path     string `json:"path"`     // New file path after rename // 重命名后的文件新路径
+	PathHash string `json:"pathHash"` // Path hash // 路径哈希值
 }
 
 // FileUploadAckMessage ack message for file upload complete, carries server timestamp and file path
@@ -73,10 +77,19 @@ type FileRenameAckMessage struct {
 type FileUploadAckMessage struct {
 	LastTime int64  `json:"lastTime"` // Server timestamp after upload // 上传完成后的服务端时间戳
 	Path     string `json:"path"`     // File path // 文件路径
+	PathHash string `json:"pathHash"` // Path hash // 路径哈希值
+}
+
+// FileDeleteAckMessage file delete operation ACK, sent back to sender after server processes FileDelete
+// FileDeleteAckMessage 文件删除操作 ACK，服务端处理完 FileDelete 后回发给发送方
+type FileDeleteAckMessage struct {
+	LastTime int64  `json:"lastTime"` // Server write timestamp // 服务端写入时间戳
+	Path     string `json:"path"`     // File path // 文件路径
+	PathHash string `json:"pathHash"` // Path hash // 路径哈希值
 }
 
 // FileSyncRenameMessage message structure for file rename during sync
-// 同步过程中文件重命名的消息结构
+// FileSyncRenameMessage 同步过程中文件重命名的消息结构
 type FileSyncRenameMessage struct {
 	Path             string `json:"path" form:"path" binding:"required" example:"NewImage.png"` // New path // 新路径
 	PathHash         string `json:"pathHash" form:"pathHash" example:"nfhash123"`               // New path hash // 新路径哈希

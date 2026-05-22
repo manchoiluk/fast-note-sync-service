@@ -14,6 +14,7 @@ type VersionInfo struct {
 	Version   string `json:"version"`
 	GitTag    string `json:"gitTag"`
 	BuildTime string `json:"buildTime"`
+	Changelog string `json:"changelog"`
 }
 
 type CheckVersionInfo struct {
@@ -102,7 +103,7 @@ func RequestParamStrParse(c *gin.Context, param any) {
 }
 
 // GetRequestIP gets the request IP
-// GetRequestIP 获取ip
+// GetRequestIP 获取 IP 地址
 func GetRequestIP(c *gin.Context) string {
 	reqIP := c.ClientIP()
 	if reqIP == "::1" {
@@ -126,10 +127,11 @@ func GetAccessHost(c *gin.Context) string {
 func (r *Response) ToResponse(codeObj *code.Code) {
 	r.Ctx.Set("status_code", codeObj.StatusCode())
 
+	lang := r.Ctx.GetString("lang")
 	content := Res{
 		Code:    codeObj.Code(),
 		Status:  codeObj.Status(),
-		Message: codeObj.Lang.GetMessage(),
+		Message: codeObj.MsgIn(lang),
 		Data:    codeObj.Data(),
 	}
 
@@ -139,7 +141,7 @@ func (r *Response) ToResponse(codeObj *code.Code) {
 
 	if codeObj.HaveVault() {
 		// Assume codeObj.Vault() returns a serializable value (string, struct, etc.)
-		// 假设 codeObj.Vault() 返回可序列化的值（string 或 struct 等）
+		// Assume codeObj.Vault() 假设 codeObj.Vault() 返回可序列化的值（string 或 struct 等）
 		content.Vault = codeObj.Vault()
 	}
 
@@ -151,10 +153,11 @@ func (r *Response) ToResponse(codeObj *code.Code) {
 func (r *Response) ToResponseList(codeObj *code.Code, list interface{}, totalRows int) {
 	r.Ctx.Set("status_code", codeObj.StatusCode())
 
+	lang := r.Ctx.GetString("lang")
 	content := Res{
 		Code:    codeObj.Code(),
 		Status:  codeObj.Status(),
-		Message: codeObj.Lang.GetMessage(),
+		Message: codeObj.MsgIn(lang),
 		Data: ListRes{
 			List:  list,
 			Pager: *NewPager(r.Ctx, totalRows),
