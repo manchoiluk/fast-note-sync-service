@@ -2,6 +2,7 @@ package api_router
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/haierkeys/fast-note-sync-service/internal/app"
@@ -35,7 +36,6 @@ func NewVaultHandler(a *app.App) *VaultHandler {
 // @Description Be used to create a new vault or update an existing vault configuration based on the ID in the request parameters
 // @Tags Vault
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.VaultPostRequest true "Vault Parameters"
@@ -96,7 +96,6 @@ func (h *VaultHandler) CreateOrUpdate(c *gin.Context) {
 // @Description Get specific vault configuration details by vault ID
 // @Tags Vault
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param id query int64 true "Vault ID"
 // @Success 200 {object} pkgapp.Res{data=dto.VaultDTO} "Success"
@@ -137,7 +136,6 @@ func (h *VaultHandler) Get(c *gin.Context) {
 // @Description Get all note vaults for current user
 // @Tags Vault
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Success 200 {object} pkgapp.Res{data=[]dto.VaultDTO} "Success"
 // @Router /api/vault [get]
@@ -188,7 +186,6 @@ func (h *VaultHandler) List(c *gin.Context) {
 // @Description Permanently delete a specific note vault and all associated notes and attachments
 // @Tags Vault
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param params query dto.VaultGetRequest true "Delete Parameters"
 // @Success 200 {object} pkgapp.Res "Success"
@@ -237,4 +234,100 @@ func (h *VaultHandler) logError(ctx context.Context, method string, err error) {
 		zap.Error(err),
 		zap.String("traceId", traceID),
 	)
+}
+
+// RebuildIndex rebuilds full-text search index for a specific vault
+// @Summary Rebuild vault FTS index
+// @Description Rebuild full-text search index from physical database and files for a specific vault, restricted to webgui client
+// @Tags Vault
+// @Security UserAuthToken
+// @Accept json
+// @Produce json
+// @Param params body dto.VaultRebuildIndexRequest true "Rebuild Index Parameters"
+// @Success 200 {object} pkgapp.Res "Success"
+// @Router /api/vault/rebuild-index [post]
+func (h *VaultHandler) RebuildIndex(c *gin.Context) {
+	response := pkgapp.NewResponse(c)
+
+	params := &dto.VaultRebuildIndexRequest{}
+
+	// Parameter binding and validation
+	// 参数绑定和验证
+	valid, errs := pkgapp.BindAndValid(c, params)
+	if !valid {
+		h.App.Logger().Error("VaultHandler.RebuildIndex.BindAndValid errs", zap.Error(errs))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		return
+	}
+
+	// Get UID
+	// 获取用户 ID
+	uid := pkgapp.GetUID(c)
+	if uid == 0 {
+		h.App.Logger().Error("VaultHandler.RebuildIndex err uid=0")
+		response.ToResponse(code.ErrorNotUserAuthToken)
+		return
+	}
+
+	// Get request context
+	// 获取请求上下文
+	ctx := c.Request.Context()
+
+	// Call service to rebuild index
+	// 调用服务重建索引
+	err := h.App.VaultService.RebuildIndex(ctx, uid, params.ID)
+	if err != nil {
+		h.logError(ctx, "VaultHandler.RebuildIndex", err)
+		apperrors.ErrorResponse(c, err)
+		return
+	}
+
+	response.ToResponse(code.Success)
+}
+
+// ForceDeleteDataItem force-deletes a single note or file in a vault
+// @Summary Force delete a single item
+// @Description Permanently delete a single note or file (attachment) in a vault
+// @Tags Vault
+// @Security UserAuthToken
+// @Accept json
+// @Produce json
+// @Param params body dto.VaultForceDeleteItemRequest true "Delete Parameters"
+// @Success 200 {object} pkgapp.Res "Success"
+// @Router /api/vault/force-delete-item [post]
+func (h *VaultHandler) ForceDeleteDataItem(c *gin.Context) {
+	response := pkgapp.NewResponse(c)
+	params := &dto.VaultForceDeleteItemRequest{}
+
+	valid, errs := pkgapp.BindAndValid(c, params)
+	if !valid {
+		h.App.Logger().Error("VaultHandler.ForceDeleteDataItem.BindAndValid err", zap.Error(errs))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		return
+	}
+
+	uid := pkgapp.GetUID(c)
+	if uid == 0 {
+		h.App.Logger().Error("VaultHandler.ForceDeleteDataItem err uid=0")
+		response.ToResponse(code.ErrorNotUserAuthToken)
+		return
+	}
+
+	ctx := c.Request.Context()
+	clientType, clientName, clientVer := h.getClientInfo(c)
+
+	// Restrict to WebGUI client only
+	if strings.ToLower(clientType) != "webgui" {
+		h.App.Logger().Error("VaultHandler.ForceDeleteDataItem restrict WebGUI only err clientType=" + clientType)
+		response.ToResponse(code.ErrorNotUserAuthToken)
+		return
+	}
+
+	if err := h.App.VaultService.ForceDeleteDataItem(ctx, uid, params.VaultID, params.Type, params.ID, clientType, clientName, clientVer); err != nil {
+		h.logError(ctx, "VaultHandler.ForceDeleteDataItem", err)
+		apperrors.ErrorResponse(c, err)
+		return
+	}
+
+	response.ToResponse(code.SuccessDelete)
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/pkg/json"
 	"github.com/haierkeys/fast-note-sync-service/pkg/logger"
 	"github.com/haierkeys/fast-note-sync-service/pkg/timex"
-	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +29,7 @@ type LogType string
 const (
 	WSPingInterval         = 25
 	WSPingWait             = 60
+	WSPingWriteTimeout     = 10      // WritePing write timeout (seconds), must < PingInterval // WritePing 写超时（秒），需小于 PingInterval
 	LogInfo        LogType = "info"
 	LogError       LogType = "error"
 	LogWarn        LogType = "warn"
@@ -219,6 +219,7 @@ type ClientInfoMessage struct {
 	IsWin               bool   `json:"isWin"`               // Is Windows // 是否为 Windows
 	IsLinux             bool   `json:"isLinux"`             // Is Linux // 是否为 Linux
 	OfflineSyncStrategy string `json:"offlineSyncStrategy"` // Offline device sync strategy "newTimeMerge" | "ignoreTimeMerge" // 离线设备同步策略 "newTimeMerge" | "ignoreTimeMerge"
+	Protobuf            bool   `json:"protobuf"`            // Use protobuf // 是否使用 protobuf
 }
 
 type WSConfig struct {
@@ -237,6 +238,12 @@ type SessionCleaner interface {
 // PathHashGetter 接口，用于通过文件路径哈希标识会话
 type PathHashGetter interface {
 	GetPathHash() string
+}
+
+// SessionCreatedAtGetter interface for sessions that track creation time
+// SessionCreatedAtGetter 接口，用于获取会话创建时间
+type SessionCreatedAtGetter interface {
+	GetCreatedAt() time.Time
 }
 
 // DiffMergeEntry represents an entry in DiffMergePaths
@@ -272,10 +279,14 @@ type WebsocketClient struct {
 	DiffMergePathsMu    sync.RWMutex              // Mutex lock to prevent concurrency conflicts // 互斥锁，防止并发冲突
 	OfflineSyncStrategy string                    // Offline device sync strategy // 离线设备同步策略 "newTimeMerge" | "ignoreTimeMerge"
 	failCount           atomic.Int32              // Consecutive broadcast failure counter; connection closed when exceeding threshold // 连续广播失败计数器，超过阈值时主动关闭连接
+	lastPongAt          atomic.Int64                    // Unix timestamp of last received pong; used to detect zombie connections // 最后一次收到 pong 的 Unix 时间戳，用于检测僵尸连接
 	TokenID             int64                     // Bound Token ID // 绑定的令牌 ID
 	Scope               string                    // Token Scope // 令牌权限范围
 	Vaults              string                    // Restrict Vaults // 限制笔记库
 	Lang                string                    // Language preference // 语言偏好
+	Protocol            string                    // Protocol "protobuf" or other // 协议 "protobuf" 或其他
+	UseProtobuf         bool                      // Whether to use protobuf protocol // 是否使用 protobuf 协议
+	currentAction       string                    // Current action type being processed // Current action type being processed // 当前正在处理的动作类型
 }
 
 // initContext initializes the context for the WebSocket connection
@@ -361,7 +372,45 @@ func (c *WebsocketClient) ClearAllDiffMergePaths() int {
 // WebSocket version of parameter binding and validation utility functions based on global validator
 // 基于全局验证器的 WebSocket 版本参数绑定和验证工具函数
 func (c *WebsocketClient) BindAndValid(data []byte, obj any) (bool, ValidErrors) {
+	return c.BindAndValidWithAction(c.currentAction, data, obj)
+}
+
+// BindAndValidWithAction WebSocket version of parameter binding and validation with specific action to avoid race condition
+// 带特定动作名称的 WebSocket 版本参数校验，避免并发消息下的 c.currentAction 竞态冲突
+func (c *WebsocketClient) BindAndValidWithAction(action string, data []byte, obj any) (bool, ValidErrors) {
 	var errs ValidErrors
+
+	if c.UseProtobuf && c.Server.ProtobufDecoder != nil {
+		decoded, err := c.Server.ProtobufDecoder(action, data, obj)
+		if err != nil {
+			errs = append(errs, &ValidError{
+				Key:     "body",
+				Message: "Protobuf decode failed: " + err.Error(),
+			})
+			return false, errs
+		}
+		if decoded {
+			validator := c.app.Validator()
+			if validator == nil {
+				return true, nil
+			}
+			if err := validator.ValidateStruct(obj); err != nil {
+				if validationErrors, ok := err.(validatorV10.ValidationErrors); ok {
+					v := c.Ctx.Value("trans")
+					trans := v.(ut.Translator)
+					for _, validationErr := range validationErrors {
+						translatedMsg := validationErr.Translate(trans)
+						errs = append(errs, &ValidError{
+							Key:     validationErr.Field(),
+							Message: translatedMsg,
+						})
+					}
+				}
+				return false, errs
+			}
+			return true, nil
+		}
+	}
 
 	// Step 1: JSON deserialization (can be replaced by other formats)
 	// BindAndValid Step 1: JSON 反序列化（可替换成其他格式）
@@ -419,6 +468,13 @@ func (c *WebsocketClient) PingLoop(PingInterval time.Duration) {
 	cleanupTicker := time.NewTicker(10 * time.Minute)
 	defer cleanupTicker.Stop()
 
+	// Initialize last pong time to now (connection just established)
+	// 初始化最后 pong 时间为当前（连接刚建立）
+	c.lastPongAt.Store(time.Now().Unix())
+	// Track whether we've sent a ping and are waiting for a pong
+	// 跟踪是否已发送 ping 并等待 pong
+	pingSent := false
+
 	for {
 		select {
 		case <-c.done:
@@ -428,6 +484,23 @@ func (c *WebsocketClient) PingLoop(PingInterval time.Duration) {
 			if c.conn == nil {
 				return
 			}
+			// If we sent a ping last cycle but never received a pong, the connection is likely dead.
+			// If we sent a ping last cycle but never received a pong, force close.
+			// 如果上一轮发了 ping 但没收到 pong，连接可能已死，强制关闭。
+			if pingSent {
+				lastPong := c.lastPongAt.Load()
+				elapsed := time.Since(time.Unix(lastPong, 0))
+				if elapsed > time.Duration(WSPingWait)*time.Second {
+					log(LogWarn, "WS Client: no pong received within deadline, force closing",
+						zap.Duration("sinceLastPong", elapsed),
+						zap.String("traceID", c.TraceID))
+					_ = c.conn.NetConn().Close()
+					return
+				}
+			}
+			// Set write deadline to prevent WritePing from blocking indefinitely on dead connections.
+			// 设置写超时，防止 WritePing 在死连接上永久阻塞
+			_ = c.conn.NetConn().SetWriteDeadline(time.Now().Add(WSPingWriteTimeout * time.Second))
 			if err := c.conn.WritePing(nil); err != nil {
 				// Normal error when the connection is closed, lower log level
 				// 连接关闭时的正常错误，降低日志级别
@@ -435,9 +508,18 @@ func (c *WebsocketClient) PingLoop(PingInterval time.Duration) {
 					log(LogDebug, "WS Client Ping: connection closed")
 				} else {
 					log(LogError, "WS Client Ping err ", zap.Error(err))
+					// Force close the underlying connection to trigger gws OnClose callback,
+					// release all resources (buffers, goroutines, worker pool slots).
+					// 强制关闭底层连接，触发 gws OnClose 回调，释放所有资源（缓冲区、goroutine、Worker Pool 槽位）
+					_ = c.conn.NetConn().Close()
 				}
+				pingSent = false
 				return
 			}
+			// Reset write deadline after successful ping.
+			// Ping 成功后重置写超时
+			_ = c.conn.NetConn().SetWriteDeadline(time.Time{})
+			pingSent = true
 			// log(LogInfo, "WS Client Ping", zap.String("uid", c.User.ID))
 		case <-cleanupTicker.C:
 			// Cleanup items expired for more than 1 hour
@@ -479,14 +561,29 @@ func (c *WebsocketClient) ToResponse(code *code.Code, action ...string) {
 	if code.HaveContext() {
 		content.Context = code.Context()
 	}
-
-	responseBytes, _ = json.Marshal(content)
-
-	if actionType != "" {
-		responseBytes = []byte(fmt.Sprintf(`%s|%s`, actionType, string(responseBytes)))
+	if code.HavePath() {
+		content.Path = code.Path()
 	}
 
 	if c.app.IsReturnSuccess() || actionType != "" || code.Code() > 200 || code.HaveData() || code.HaveDetails() {
+		if c.UseProtobuf && c.Server.ProtobufEncoder != nil && actionType != "" && code.Status() {
+			pbBytes, err := c.Server.ProtobufEncoder(actionType, &content)
+			if err == nil {
+				c.conn.WriteMessage(gws.OpcodeBinary, pbBytes)
+				return
+			}
+			log(LogError, "WS Protobuf encode failed, falling back to JSON", zap.Error(err), zap.String("uid", func() string {
+				if c.User != nil {
+					return c.User.ID
+				}
+				return "Guest"
+			}()))
+		}
+
+		responseBytes, _ = json.Marshal(content)
+		if actionType != "" {
+			responseBytes = []byte(fmt.Sprintf(`%s|%s`, actionType, string(responseBytes)))
+		}
 		c.send(responseBytes, false, false)
 	}
 }
@@ -516,8 +613,6 @@ func (c *WebsocketClient) BroadcastResponse(code *code.Code, options ...any) {
 		return
 	}
 
-	var responseBytes []byte
-
 	content := Res{
 		Code:    code.Code(),
 		Status:  code.Status(),
@@ -537,33 +632,28 @@ func (c *WebsocketClient) BroadcastResponse(code *code.Code, options ...any) {
 		content.Context = code.Context()
 	}
 
-	responseBytes, _ = json.Marshal(content)
-
-	if actionType != "" {
-		responseBytes = []byte(fmt.Sprintf(`%s|%s`, actionType, string(responseBytes)))
-	}
-
-	c.send(responseBytes, true, options[0].(bool))
+	c.sendBroadcast(&content, actionType, options[0].(bool))
 }
 
 func (c *WebsocketClient) send(responseBytes []byte, isBroadcast bool, isExcludeSelf bool) {
-	if isBroadcast {
-		c.sendBroadcast(responseBytes, isExcludeSelf)
-	} else {
-		c.sendMessage(responseBytes)
-	}
+	c.sendMessage(responseBytes)
 }
 
 func (c *WebsocketClient) sendMessage(payload []byte) {
 	c.conn.WriteMessage(gws.OpcodeText, payload)
 }
 
-func (c *WebsocketClient) sendBroadcast(payload []byte, isExcludeSelf bool) {
+func (c *WebsocketClient) sendBroadcast(content *Res, actionType string, isExcludeSelf bool) {
 	c.Server.mu.RLock()
 	defer c.Server.mu.RUnlock()
 
-	var b = gws.NewBroadcaster(gws.OpcodeText, payload)
-	defer b.Close()
+	var jsonBytes []byte
+	if actionType != "" {
+		mBytes, _ := json.Marshal(content)
+		jsonBytes = []byte(fmt.Sprintf(`%s|%s`, actionType, string(mBytes)))
+	} else {
+		jsonBytes, _ = json.Marshal(content)
+	}
 
 	for _, uc := range c.UserClients {
 		if uc.conn == nil {
@@ -573,9 +663,18 @@ func (c *WebsocketClient) sendBroadcast(payload []byte, isExcludeSelf bool) {
 			continue
 		}
 
-		// Track consecutive broadcast failures and close half-broken connections proactively.
-		// 追踪连续广播失败次数，主动关闭半断开的连接（TCP keepalive 未超时但已无法通信）。
-		if err := b.Broadcast(uc.conn); err != nil {
+		var err error
+		if uc.UseProtobuf && uc.Server.ProtobufEncoder != nil && actionType != "" {
+			var pbBytes []byte
+			pbBytes, err = uc.Server.ProtobufEncoder(actionType, content)
+			if err == nil {
+				err = uc.conn.WriteMessage(gws.OpcodeBinary, pbBytes)
+			}
+		} else {
+			err = uc.conn.WriteMessage(gws.OpcodeText, jsonBytes)
+		}
+
+		if err != nil {
 			if uc.failCount.Add(1) == 4 {
 				uc.conn.WriteClose(1000, []byte("broadcast failed"))
 			}
@@ -654,11 +753,14 @@ type ValidatorInterface interface {
 type WebsocketServer struct {
 	app               AppContainer // App Container (Required) // App Container（必须）
 	handlers           map[string]func(*WebsocketClient, *WebSocketMessage)
+	noAuthHandlers     map[string]func(*WebsocketClient, *WebSocketMessage) // Handlers that do not require user authentication // 免登录鉴权消息处理器集合
+	interceptors       []func(*WebsocketClient, *WebSocketMessage) bool     // Pre-handler interceptor chain // 消息前置拦截器链
 	userVerifyHandler  func(*WebsocketClient, int64) (*UserSelectEntity, error)
 	tokenVerifyHandler func(ctx context.Context, uid int64, tokenID int64, nonce string, reqClientType, reqClientName, reqClientVersion, reqUserAgent, reqIP string) (string, string, error)
 	binaryHandlers    map[string]func(*WebsocketClient, []byte) // Binary message handler map: prefix -> handler // 二进制消息处理器映射 prefix -> handler
 	clients           ConnStorage
 	userClients       map[string]ConnStorage
+	connWg            sync.WaitGroup
 	mu                sync.RWMutex
 	up                *gws.Upgrader
 	config            *WSConfig
@@ -666,6 +768,9 @@ type WebsocketServer struct {
 	// 全局会话管理 (UID -> SessionID -> Session)
 	binaryChunkSessions map[string]map[string]any
 	sessionsMu          sync.RWMutex
+	EnvelopeDecoder     func(data []byte) (string, []byte, error)               // Protobuf envelope decoder // Protobuf 信封解包钩子
+	ProtobufDecoder     func(action string, data []byte, obj any) (bool, error) // Protobuf decoder hook // Protobuf 解码钩子
+	ProtobufEncoder     func(action string, res *Res) ([]byte, error)           // Protobuf encoder hook // Protobuf 编码钩子
 }
 
 // WSClientInfo WebSocket client information for API responses
@@ -758,15 +863,24 @@ func NewWebsocketServer(c WSConfig, app AppContainer) *WebsocketServer {
 	// 设置 WebSocket 模块的生产模式标记
 	SetWSProductionMode(app.IsProductionMode())
 
-	return &WebsocketServer{
+	wss := &WebsocketServer{
 		app:                 app,
 		handlers:            make(map[string]func(*WebsocketClient, *WebSocketMessage)),
+		noAuthHandlers:      make(map[string]func(*WebsocketClient, *WebSocketMessage)),
+		interceptors:        make([]func(*WebsocketClient, *WebSocketMessage) bool, 0),
 		binaryHandlers:      make(map[string]func(*WebsocketClient, []byte)),
 		clients:             make(ConnStorage),
 		userClients:         make(map[string]ConnStorage),
 		config:              &c,
 		binaryChunkSessions: make(map[string]map[string]any),
 	}
+
+	// Register built-in unauthenticated handlers
+	// 自动注册系统内置免登录鉴权的消息处理器
+	wss.UseWithoutAuth("Authorization", wss.Authorization)
+	wss.UseWithoutAuth("ClientInfo", wss.ClientInfo)
+
+	return wss
 }
 
 // App gets App Container
@@ -809,6 +923,7 @@ func (w *WebsocketServer) Run() gin.HandlerFunc {
 		client.ClientType = c.Query("client")
 		client.ClientName = c.Query("clientName")
 		client.ClientVersion = c.Query("clientVersion")
+		client.Protocol = c.Query("protocol")
 
 		// Extract language preference
 		// 提取语言偏好
@@ -823,6 +938,7 @@ func (w *WebsocketServer) Run() gin.HandlerFunc {
 		client.initContext(traceID)
 
 		w.AddClient(client)
+		w.connWg.Add(1)
 		log(LogInfo, "WS Start",
 			zap.String("type", "ReadLoop"),
 			zap.String("traceID", traceID),
@@ -836,6 +952,25 @@ func (w *WebsocketServer) Run() gin.HandlerFunc {
 
 func (w *WebsocketServer) Use(action string, handler func(*WebsocketClient, *WebSocketMessage)) {
 	w.handlers[action] = handler
+}
+
+// UseWithoutAuth registers a message handler that does not require user authentication
+// UseWithoutAuth 注册无需用户登录鉴权的消息处理器
+func (w *WebsocketServer) UseWithoutAuth(action string, handler func(*WebsocketClient, *WebSocketMessage)) {
+	w.noAuthHandlers[action] = handler
+}
+
+// UseInterceptor registers a pre-handler interceptor
+// UseInterceptor 注册消息前置拦截器
+func (w *WebsocketServer) UseInterceptor(interceptor func(*WebsocketClient, *WebSocketMessage) bool) {
+	w.interceptors = append(w.interceptors, interceptor)
+}
+
+// GetHandler returns the handler for a specific action
+// GetHandler 返回指定动作的消息处理器
+func (w *WebsocketServer) GetHandler(action string) (func(*WebsocketClient, *WebSocketMessage), bool) {
+	h, ok := w.handlers[action]
+	return h, ok
 }
 
 func (w *WebsocketServer) UseUserVerify(handler func(*WebsocketClient, int64) (*UserSelectEntity, error)) {
@@ -939,9 +1074,9 @@ func (w *WebsocketServer) Authorization(c *WebsocketClient, msg *WebSocketMessag
 
 func (w *WebsocketServer) ClientInfo(c *WebsocketClient, msg *WebSocketMessage) {
 	var info ClientInfoMessage
-	if err := json.Unmarshal(msg.Data, &info); err != nil {
-		log(LogError, "WS ClientInfo Unmarshal FAILD", zap.Error(err))
-		c.ToResponse(code.ErrorInvalidParams.WithDetails(err.Error()))
+	if ok, errs := c.BindAndValidWithAction(msg.Type, msg.Data, &info); !ok {
+		log(LogError, "WS ClientInfo Unmarshal FAILD", zap.Error(fmt.Errorf("%s", errs.ErrorsToString())))
+		c.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()))
 		return
 	}
 
@@ -959,6 +1094,25 @@ func (w *WebsocketServer) ClientInfo(c *WebsocketClient, msg *WebSocketMessage) 
 	}
 	c.OfflineSyncStrategy = info.OfflineSyncStrategy
 	c.DiffMergePaths = make(map[string]DiffMergeEntry)
+
+	// Enable Protobuf if query param protocol=protobuf and ClientInfo protobuf=true
+	if c.Protocol == "protobuf" && info.Protobuf {
+		c.UseProtobuf = true
+		log(LogInfo, "WS Client upgraded to Protobuf successfully", zap.String("uid", func() string {
+			if c.User != nil {
+				return c.User.ID
+			}
+			return "Guest"
+		}()))
+	} else {
+		c.UseProtobuf = false
+		log(LogInfo, "WS Client downgraded/disabled Protobuf successfully", zap.String("uid", func() string {
+			if c.User != nil {
+				return c.User.ID
+			}
+			return "Guest"
+		}()))
+	}
 
 	log(LogInfo, "WS ClientInfo", zap.String("uid", func() string {
 		if c.User != nil {
@@ -1107,6 +1261,44 @@ func (w *WebsocketServer) KickToken(uid int64, tokenID int64) {
 	}
 }
 
+// CloseAllConnections sends a close frame to all active WebSocket connections.
+// This must be called before shutting down the Worker Pool and Write Queue Manager
+// to ensure hijacked WebSocket connections are properly terminated.
+// 向所有活跃的 WebSocket 连接发送关闭帧。
+// 必须在关闭 Worker Pool 和 Write Queue Manager 之前调用，以确保被劫持的 WebSocket 连接被正确终止。
+func (w *WebsocketServer) CloseAllConnections() {
+	w.mu.RLock()
+	clients := make([]*WebsocketClient, 0, len(w.clients))
+	for _, c := range w.clients {
+		clients = append(clients, c)
+	}
+	w.mu.RUnlock()
+
+	for _, c := range clients {
+		if c.conn != nil {
+			_ = c.conn.WriteClose(1001, []byte("server shutting down"))
+		}
+	}
+}
+
+// WaitAllClosed waits for all WebSocket connections to be fully closed (OnClose completed).
+// Returns when all connections are closed or timeout is reached.
+// 等待所有 WebSocket 连接完全关闭（OnClose 回调执行完毕）。
+// 在所有连接关闭或超时后返回。
+func (w *WebsocketServer) WaitAllClosed(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		w.connWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		log(LogWarn, "WaitAllClosed: timeout waiting for WebSocket connections to close",
+			zap.Int("remaining", len(w.clients)))
+	}
+}
+
 func (w *WebsocketServer) RemoveUserClient(c *WebsocketClient) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -1137,6 +1329,24 @@ func (w *WebsocketServer) GetSession(uid string, sessionID string) any {
 	defer w.sessionsMu.RUnlock()
 	if userSessions, ok := w.binaryChunkSessions[uid]; ok {
 		return userSessions[sessionID]
+	}
+	return nil
+}
+
+// GetSessionByPathHash gets global binary upload session by path hash
+// GetSessionByPathHash 通过路径哈希获取全局二进制上传会话
+//go:noinline
+func (w *WebsocketServer) GetSessionByPathHash(uid string, pathHash string) any {
+	w.sessionsMu.RLock()
+	defer w.sessionsMu.RUnlock()
+	if userSessions, ok := w.binaryChunkSessions[uid]; ok {
+		for _, session := range userSessions {
+			if getter, ok := session.(PathHashGetter); ok {
+				if getter.GetPathHash() == pathHash {
+					return session
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -1216,6 +1426,7 @@ func isNormalDisconnectError(err error) bool {
 }
 
 func (w *WebsocketServer) OnClose(conn *gws.Conn, err error) {
+	defer w.connWg.Done()
 
 	c := w.GetClient(conn)
 	if c == nil {
@@ -1251,8 +1462,13 @@ func (w *WebsocketServer) OnClose(conn *gws.Conn, err error) {
 
 	// No longer clean up BinaryChunkSessions in OnClose, rely on the timeout mechanism for automatic cleanup instead
 	// 不再在 OnClose 中清理 BinaryChunkSessions，改为依赖超时机制自动清理
-	// This way, when a network fluctuation causes reconnection during a large file upload, the existing session can continue to be used
-	// 这样可以支持在大文件上传过程中网络波动导致重连时，继续使用原有会话
+	// However, clean up stale sessions (older than 10 minutes) to prevent memory leaks from zombie connections.
+	// 但是清理超过 10 分钟的过期会话，防止僵尸连接导致内存泄漏。
+	// Recent sessions are kept to support reconnection during network fluctuations.
+	// 保留近期会话以支持网络波动期间的重连。
+	if c.User != nil {
+		w.cleanupStaleSessions(c.User.ID, 10*time.Minute)
+	}
 
 	// Clean up all DiffMergePaths entries
 	// 清理所有 DiffMergePaths 条目
@@ -1273,6 +1489,9 @@ func (w *WebsocketServer) OnPing(socket *gws.Conn, payload []byte) {
 
 func (w *WebsocketServer) OnPong(socket *gws.Conn, payload []byte) {
 	_ = socket.SetDeadline(time.Now().Add(w.config.PingWait * time.Second))
+	if c := w.GetClient(socket); c != nil {
+		c.lastPongAt.Store(time.Now().Unix())
+	}
 }
 
 func (w *WebsocketServer) OnMessage(conn *gws.Conn, message *gws.Message) {
@@ -1338,6 +1557,49 @@ func (w *WebsocketServer) OnMessage(conn *gws.Conn, message *gws.Message) {
 				c.ToResponse(code.ErrorServerBusy)
 				return
 			}
+		} else if prefix == "pb" {
+			if !c.UseProtobuf {
+				log(LogWarn, "WS OnMessage received Protobuf but UseProtobuf is false", zap.String("uid", c.User.ID))
+				return
+			}
+			if w.EnvelopeDecoder == nil {
+				log(LogError, "WS OnMessage EnvelopeDecoder is nil", zap.String("uid", c.User.ID))
+				return
+			}
+
+			action, innerPayload, err := w.EnvelopeDecoder(payloadCopy)
+			if err != nil {
+				log(LogError, "WS OnMessage Protobuf Envelope decode failed", zap.Error(err), zap.String("uid", c.User.ID))
+				return
+			}
+
+			msg := WebSocketMessage{
+				Type: action,
+				Data: innerPayload,
+			}
+
+			if noAuthHandler, exists := w.noAuthHandlers[msg.Type]; exists {
+				noAuthHandler(c, &msg)
+				return
+			}
+
+			for _, interceptor := range w.interceptors {
+				if !interceptor(c, &msg) {
+					return
+				}
+			}
+
+			handler, exists := w.handlers[msg.Type]
+			if exists {
+				handler(c, &msg)
+			} else {
+				log(LogError, "WS Unknown Message (Protobuf)", zap.String("Type", msg.Type), zap.String("uid", func() string {
+					if c.User != nil {
+						return c.User.ID
+					}
+					return "Guest"
+				}()))
+			}
 		} else {
 			log(LogWarn, "WS OnMessage Unknown Binary Prefix", zap.String("prefix", prefix))
 		}
@@ -1360,152 +1622,35 @@ func (w *WebsocketServer) OnMessage(conn *gws.Conn, message *gws.Message) {
 		return
 	}
 
-	if msg.Type == "Authorization" {
-		w.Authorization(c, &msg)
+	// Prioritize matching and executing unauthenticated handlers
+	// 优先匹配并执行免登录鉴权的消息处理器
+	if noAuthHandler, exists := w.noAuthHandlers[msg.Type]; exists {
+		noAuthHandler(c, &msg)
 		return
 	}
 
-	if msg.Type == "ClientInfo" {
-		w.ClientInfo(c, &msg)
-		return
-	}
-
-	// Verify if the user is logged in
-	// 验证用户是否登录
-	if c.User == nil {
-		log(LogWarn, "WS User not authenticated",
-			zap.String("msgType", msg.Type),
-			zap.String("traceId", c.TraceID))
-		c.ToResponse(code.ErrorNotUserAuthToken)
-		return
-	}
-
-	// Verify Vault Restrictions for active WebSocket connections
-	// 针对活跃 WebSocket 连接校验笔记库访问权限限制
-	if c.Vaults != "" {
-		var vaultInfo struct {
-			Vault string `json:"vault"`
-		}
-		if err := json.Unmarshal(msg.Data, &vaultInfo); err == nil && vaultInfo.Vault != "" {
-			if !util.VerifyVaultAccess(c.Vaults, vaultInfo.Vault) {
-				log(LogWarn, "WS OnMessage Vault Restricted", zap.String("Type", msg.Type), zap.String("uid", c.User.ID), zap.String("vault", vaultInfo.Vault))
-				c.ToResponse(code.ErrorAuthTokenScopeRestricted.WithDetails("Vault access restricted: "+vaultInfo.Vault), msg.Type+"Ack")
-				return
-			}
+	// Execute all registered pre-handler interceptors
+	// 执行所有注册的前置拦截器。若任何一个返回 false，则中断后续执行
+	for _, interceptor := range w.interceptors {
+		if !interceptor(c, &msg) {
+			return
 		}
 	}
 
 	// Execute operation
 	// 执行操作
+	// Execute core business handler
+	// 执行核心业务处理器
 	handler, exists := w.handlers[msg.Type]
 	if exists {
-		// Map Action to Function for RBAC
-		var function string
-		switch msg.Type {
-		case "NoteSync", "NoteCheck", "NoteRePush", "FolderSync":
-			function = "note_r"
-		case "NoteModify", "NoteDelete", "NoteRename", "FolderModify", "FolderDelete", "FolderRename":
-			function = "note_w"
-		case "FileChunkDownload", "FileRePush", "FileSync":
-			function = "file_r"
-		case "FileUploadCheck", "FileDelete", "FileRename":
-			function = "file_w"
-		case "SettingSync", "SettingCheck", "SettingRePush":
-			function = "config_r"
-		case "SettingModify", "SettingDelete", "SettingClear":
-			function = "config_w"
-		}
-
-		if function != "" && !VerifyPermissions(c.Scope, "ws", c.ClientType, function) {
-			log(LogWarn, "WS OnMessage Permission Denied", zap.String("Type", msg.Type), zap.String("uid", c.User.ID), zap.String("function", function))
-
-			// Try to extract resource path from message data
-			var pathInfo struct {
-				Path string `json:"path"`
-				Name string `json:"name"`
-			}
-			_ = json.Unmarshal(msg.Data, &pathInfo)
-			resPath := pathInfo.Path
-			if resPath == "" {
-				resPath = pathInfo.Name
-			}
-			if resPath == "" {
-				resPath = msg.Type // Fallback to message type
-			}
-
-			c.ToResponse(code.ErrorAuthTokenScopeRestricted.WithDetails("Permission denied: "+resPath), msg.Type+"Ack")
-
-			// Trigger re-push for write operations to ensure client consistency
-			// 触发写操作的重推，确保客户端一致性
-			if strings.HasSuffix(function, "_w") {
-				// Special handling for Rename operations:
-				// Send a SyncRename message to "rename back" the resource on the client side.
-				// For example, if client tried A -> B and failed, we send Rename(Path=A, OldPath=B).
-				// 针对重命名操作的特殊处理：
-				// 向客户端发送一个同步重命名消息，将其“重命名回”原始路径。
-				// 例如：客户端尝试 A -> B 失败，我们下发 Rename(Path=A, OldPath=B)。
-				if strings.HasSuffix(msg.Type, "Rename") {
-					var renameData map[string]interface{}
-					if err := json.Unmarshal(msg.Data, &renameData); err == nil {
-						vault, _ := renameData["vault"].(string)
-						newPath, _ := renameData["path"].(string)
-						newPathHash, _ := renameData["pathHash"].(string)
-						oldPath, _ := renameData["oldPath"].(string)
-						oldPathHash, _ := renameData["oldPathHash"].(string)
-
-						if newPath != "" && oldPath != "" {
-							var syncRenameAction string
-							switch function {
-							case "note_w":
-								if strings.Contains(msg.Type, "Folder") {
-									syncRenameAction = "FolderSyncRename"
-								} else {
-									syncRenameAction = "NoteSyncRename"
-								}
-							case "file_w":
-								syncRenameAction = "FileSyncRename"
-							}
-
-							if syncRenameAction != "" {
-								rollbackData := map[string]interface{}{
-									"path":        oldPath,
-									"pathHash":    oldPathHash,
-									"oldPath":     newPath,
-									"oldPathHash": newPathHash,
-								}
-								c.ToResponse(code.Success.WithData(rollbackData).WithVault(vault), syncRenameAction)
-								// For Rename rollback, we don't need subsequent RePush (Delete/Modify)
-								// 对于重命名回滚，我们不再需要后续的 RePush（避免下发 Delete/Modify）
-								return
-							}
-						}
-					}
-				}
-
-				var rePushAction string
-				switch function {
-				case "note_w":
-					rePushAction = "NoteRePush"
-				case "file_w":
-					rePushAction = "FileRePush"
-				case "config_w":
-					rePushAction = "SettingRePush"
-				}
-
-				if rePushAction != "" {
-					if h, ok := w.handlers[rePushAction]; ok {
-						log(LogInfo, "WS Trigger RePush on permission denied", zap.String("action", rePushAction), zap.String("uid", c.User.ID))
-						h(c, &msg)
-					}
-				}
-			}
-			return
-		}
-
-		// Use the client object retrieved at the beginning of the function
 		handler(c, &msg)
 	} else {
-		log(LogError, "WS Unknown Message", zap.String("Type", msg.Type), zap.String("uid", c.User.ID))
+		log(LogError, "WS Unknown Message", zap.String("Type", msg.Type), zap.String("uid", func() string {
+			if c.User != nil {
+				return c.User.ID
+			}
+			return "Guest"
+		}()))
 	}
 }
 
@@ -1557,3 +1702,42 @@ func (w *WebsocketServer) BroadcastToUser(uid int64, code *code.Code, action str
 		}
 	}
 }
+
+// cleanupStaleSessions removes BinaryChunkSessions older than maxAge for a given user.
+// This prevents memory leaks from zombie connections whose timeout goroutines never fired.
+// cleanupStaleSessions 清理指定用户超过 maxAge 的 BinaryChunkSessions。
+// 防止僵尸连接的超时 goroutine 未触发时导致的内存泄漏。
+func (w *WebsocketServer) cleanupStaleSessions(uid string, maxAge time.Duration) {
+	w.sessionsMu.Lock()
+	defer w.sessionsMu.Unlock()
+
+	userSessions, ok := w.binaryChunkSessions[uid]
+	if !ok {
+		return
+	}
+
+	var staleIDs []string
+	for sessionID, session := range userSessions {
+		if getter, ok := session.(SessionCreatedAtGetter); ok {
+			if time.Since(getter.GetCreatedAt()) > maxAge {
+				staleIDs = append(staleIDs, sessionID)
+			}
+		}
+	}
+
+	for _, sessionID := range staleIDs {
+		session := userSessions[sessionID]
+		delete(userSessions, sessionID)
+		if cleaner, ok := session.(SessionCleaner); ok {
+			go cleaner.Cleanup()
+		}
+		log(LogInfo, "cleanupStaleSessions: removed stale session",
+			zap.String("uid", uid),
+			zap.String("sessionID", sessionID))
+	}
+
+	if len(userSessions) == 0 {
+		delete(w.binaryChunkSessions, uid)
+	}
+}
+

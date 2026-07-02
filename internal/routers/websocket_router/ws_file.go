@@ -58,6 +58,7 @@ type FileUploadBinaryChunkSession struct {
 	CancelFunc     context.CancelFunc  // Cancel function for timeout control // 取消函数，用于超时控制
 	uploadedChunks map[uint32]struct{} // Record of uploaded chunk indices for idempotency // 已上传分块索引记录，用于幂等
 	isCompleted    bool                // Whether upload is completely finished // 上传是否已彻底完成
+	Context        string              // Context // 上下文
 }
 
 func (s *FileUploadBinaryChunkSession) Cleanup() {
@@ -104,6 +105,10 @@ func (s *FileUploadBinaryChunkSession) GetPathHash() string {
 	return s.PathHash
 }
 
+func (s *FileUploadBinaryChunkSession) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
 // FileDownloadChunkSession defines the session state for file chunk download
 // Used to track progress and file info for large file chunk downloads
 // FileDownloadChunkSession 定义文件分块下载的会话状态。
@@ -125,9 +130,9 @@ func (h *FileWSHandler) FileUploadCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 
 	// Bind and validate parameters
 	// 绑定并验证参数
-	valid, errs := c.BindAndValid(msg.Data, params)
+	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileUploadCheck.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileUploadCheck.BindAndValid", msg)
 		return
 	}
 
@@ -171,7 +176,7 @@ func (h *FileWSHandler) FileUploadCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 	switch updateMode {
 	case "UpdateContent", "Create":
 
-		session, err := h.handleFileUploadSessionCreate(c, params.Vault, params.Path, params.PathHash, params.ContentHash, params.Size, params.Ctime, params.Mtime)
+		session, err := h.handleFileUploadSessionCreate(c, params.Vault, params.Path, params.PathHash, params.ContentHash, params.Size, params.Ctime, params.Mtime, params.Context)
 		if err != nil {
 			h.respondError(c, code.ErrorFileUploadCheckFailed, err, "websocket_router.file.FileUploadCheck.handleFileUploadSessionCreate")
 			return
@@ -184,7 +189,7 @@ func (h *FileWSHandler) FileUploadCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 				SessionID: session.ID,
 				ChunkSize: session.ChunkSize,
 			},
-		).WithVault(params.Vault), dto.FileUpload)
+		).WithVault(params.Vault).WithContext(params.Context), FileUpload)
 		return
 
 	case "UpdateMtime":
@@ -196,11 +201,11 @@ func (h *FileWSHandler) FileUploadCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 				Mtime:            fileSvc.Mtime,
 				UpdatedTimestamp: fileSvc.UpdatedTimestamp,
 			},
-		), dto.FileSyncMtime)
+		).WithContext(params.Context), FileSyncMtime)
 		return
 	default:
 		// 无需更新
-		c.ToResponse(code.SuccessNoUpdate.WithVault(params.Vault))
+		c.ToResponse(code.SuccessNoUpdate.WithVault(params.Vault).WithContext(params.Context))
 	}
 }
 
@@ -214,6 +219,14 @@ func (h *FileWSHandler) FileUploadChunkBinary(c *pkgapp.WebsocketClient, data []
 		h.logInfo(c, "FileUploadChunkBinary: context cancelled, skipping chunk processing")
 		return
 	default:
+	}
+
+	// Verify permissions (file_w scope required for file chunk upload)
+	// 校验权限 (文件分块上传需要拥有 file_w 权限范围)
+	if !pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType, "file_w") {
+		h.logWarn(c, "FileUploadChunkBinary: permission denied for file_w")
+		c.ToResponse(code.ErrorAuthTokenScopeRestricted.WithDetails("Permission denied: file_w"))
+		return
 	}
 
 	if len(data) < 40 {
@@ -355,7 +368,12 @@ func (h *FileWSHandler) FileUploadChunkBinary(c *pkgapp.WebsocketClient, data []
 		_, fileSvc, err := fileService.UploadComplete(ctx, c.User.UID, svcParams)
 
 		if err != nil {
-			h.respondError(c, code.ErrorFileModifyOrCreateFailed, err, "websocket_router.file.FileUploadChunkBinary.UploadComplete")
+			// 在 UploadComplete 失败时，返回携带 sessionID 和 path 的错误响应，以便客户端清理活跃状态并释放并发槽位
+			// When UploadComplete fails, return an error response containing sessionID and path, so the client can clean up and release slot
+			h.respondErrorWithData(c, code.ErrorFileModifyOrCreateFailed, err, map[string]string{
+				"sessionID": sessionID,
+				"path":      session.Path,
+			}, "websocket_router.file.FileUploadChunkBinary.UploadComplete")
 			return
 		}
 
@@ -374,7 +392,7 @@ func (h *FileWSHandler) FileUploadChunkBinary(c *pkgapp.WebsocketClient, data []
 			LastTime: ackLastTime,
 			Path:     session.Path,
 			PathHash: session.PathHash,
-		}).WithVault(session.Vault), string(dto.FileUploadAck))
+		}).WithVault(session.Vault).WithContext(session.Context), string(FileUploadAck))
 
 		// Mark as completed and remove from global server
 		// 标记为已完成并从全局服务器移除
@@ -396,7 +414,7 @@ func (h *FileWSHandler) FileUploadChunkBinary(c *pkgapp.WebsocketClient, data []
 					Mtime:            fileSvc.Mtime,
 					UpdatedTimestamp: fileSvc.UpdatedTimestamp,
 				},
-			).WithVault(session.Vault), true, dto.FileSyncUpdate)
+			).WithVault(session.Vault), true, FileSyncUpdate)
 		} else {
 			h.logInfo(c, "FileUploadChunkBinary: fileSvc is nil, ack sent but skipping broadcast", zap.String("path", session.Path))
 		}
@@ -408,9 +426,9 @@ func (h *FileWSHandler) FileUploadChunkBinary(c *pkgapp.WebsocketClient, data []
 func (h *FileWSHandler) FileDelete(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
 	params := &dto.FileDeleteRequest{}
 
-	valid, errs := c.BindAndValid(msg.Data, params)
+	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileDelete.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileDelete.BindAndValid", msg)
 		return
 	}
 
@@ -435,7 +453,7 @@ func (h *FileWSHandler) FileDelete(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 		LastTime: fileSvc.UpdatedTimestamp,
 		Path:     fileSvc.Path,
 		PathHash: fileSvc.PathHash,
-	}).WithVault(params.Vault), string(dto.FileDeleteAck))
+	}).WithVault(params.Vault).WithContext(params.Context), string(FileDeleteAck))
 
 	// Broadcast file deletion message
 	// 广播文件删除消息
@@ -448,16 +466,16 @@ func (h *FileWSHandler) FileDelete(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 			Size:             fileSvc.Size,
 			UpdatedTimestamp: fileSvc.UpdatedTimestamp,
 		},
-	).WithVault(params.Vault), true, dto.FileSyncDelete)
+	).WithVault(params.Vault), true, FileSyncDelete)
 }
 
 // FileRename handles file rename request.
 // FileRename 处理文件重命名请求。
 func (h *FileWSHandler) FileRename(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
 	params := &dto.FileRenameRequest{}
-	valid, errs := c.BindAndValid(msg.Data, params)
+	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileRename.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileRename.BindAndValid", msg)
 		return
 	}
 
@@ -475,7 +493,7 @@ func (h *FileWSHandler) FileRename(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 		LastTime: newFile.UpdatedTimestamp,
 		Path:     newFile.Path,
 		PathHash: newFile.PathHash,
-	}).WithVault(params.Vault), string(dto.FileRenameAck))
+	}).WithVault(params.Vault).WithContext(params.Context), string(FileRenameAck))
 
 	c.BroadcastResponse(code.Success.WithData(
 		dto.FileSyncRenameMessage{
@@ -489,7 +507,7 @@ func (h *FileWSHandler) FileRename(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 			OldPathHash:      oldFile.PathHash,
 			UpdatedTimestamp: newFile.UpdatedTimestamp,
 		},
-	).WithVault(params.Vault), true, dto.FileSyncRename)
+	).WithVault(params.Vault), true, FileSyncRename)
 }
 
 // FileChunkDownload handles file chunk download request.
@@ -499,9 +517,9 @@ func (h *FileWSHandler) FileRename(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 func (h *FileWSHandler) FileChunkDownload(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
 	params := &dto.FileGetRequest{}
 
-	valid, errs := c.BindAndValid(msg.Data, params)
+	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileChunkDownload.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileChunkDownload.BindAndValid", msg)
 		return
 	}
 
@@ -525,7 +543,7 @@ func (h *FileWSHandler) FileChunkDownload(c *pkgapp.WebsocketClient, msg *pkgapp
 	// Check if file exists on disk
 	// 检查文件是否存在于磁盘
 	if _, err := os.Stat(fileSvc.SavePath); os.IsNotExist(err) {
-		h.respondError(c, code.ErrorFileGetFailed, fmt.Errorf("file not found on disk: %s (pathHash: %s)", fileSvc.SavePath, fileSvc.PathHash), "websocket_router.file.FileChunkDownload.Stat")
+		h.respondError(c, code.ErrorFileGetFailed, fmt.Errorf("file not found on disk: %s (path: %s, pathHash: %s)", fileSvc.SavePath, fileSvc.Path, fileSvc.PathHash), "websocket_router.file.FileChunkDownload.Stat")
 		return
 	}
 
@@ -563,7 +581,7 @@ func (h *FileWSHandler) FileChunkDownload(c *pkgapp.WebsocketClient, msg *pkgapp
 			TotalChunks: session.TotalChunks,
 			Size:        session.Size,
 		},
-	), dto.FileSyncChunkDownload)
+	).WithVault(params.Vault).WithContext(params.Context), FileSyncChunkDownload)
 
 	// Start chunk sending, pass timeout and logger
 	// 启动分片发送,传入超时时间和 logger
@@ -577,12 +595,69 @@ func (h *FileWSHandler) FileChunkDownload(c *pkgapp.WebsocketClient, msg *pkgapp
 func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
 	params := &dto.FileSyncRequest{}
 
-	valid, errs := c.BindAndValid(msg.Data, params)
+	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileSync.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileSync.BindAndValid", msg)
 		return
 	}
 
+	// 分批协议快速路径：totalBatches <= 1 时直接执行，无需缓存归集
+	// Fast path: totalBatches <= 1 means single batch, skip cache accumulation
+	if params.TotalBatches > 1 {
+		entry := syncBatchGetOrCreate(params.Context, "file", params.TotalBatches)
+
+		entry.mu.Lock()
+		for _, f := range params.Files {
+			entry.Items = append(entry.Items, f)
+		}
+		entry.ReceivedCount++
+		for _, df := range params.DelFiles {
+			entry.DelItems = append(entry.DelItems, df)
+		}
+		for _, mf := range params.MissingFiles {
+			entry.MissingItems = append(entry.MissingItems, mf)
+		}
+		entry.UpdatedAt = time.Now()
+		received := entry.ReceivedCount
+		total := entry.TotalBatches
+		entry.mu.Unlock()
+
+		if received < total {
+			// 未集齐：回送 BatchAck，通知客户端可以发送下一批
+			// Not all batches received: send BatchAck to signal client to send next batch
+			c.ToResponse(code.Success.WithData(map[string]interface{}{
+				"context":    params.Context,
+				"batchIndex": params.BatchIndex,
+			}).WithVault(params.Vault).WithContext(params.Context), FileSyncBatchAck)
+			return
+		}
+
+		// 全部批次到达：从缓存中提取数据，清理缓存，执行差量比对
+		// All batches received: extract from cache, delete cache, run differential sync
+		syncBatchDelete(params.Context, "file")
+		allFiles := make([]dto.FileSyncCheckRequest, 0, len(entry.Items))
+		for _, item := range entry.Items {
+			allFiles = append(allFiles, item.(dto.FileSyncCheckRequest))
+		}
+		params.Files = allFiles
+
+		allDelFiles := make([]dto.FileSyncDelFile, 0, len(entry.DelItems))
+		for _, item := range entry.DelItems {
+			allDelFiles = append(allDelFiles, item.(dto.FileSyncDelFile))
+		}
+		params.DelFiles = allDelFiles
+
+		allMissingFiles := make([]dto.FileSyncDelFile, 0, len(entry.MissingItems))
+		for _, item := range entry.MissingItems {
+			allMissingFiles = append(allMissingFiles, item.(dto.FileSyncDelFile))
+		}
+		params.MissingFiles = allMissingFiles
+	}
+
+	h.doFileSync(c, params)
+}
+
+func (h *FileWSHandler) doFileSync(c *pkgapp.WebsocketClient, params *dto.FileSyncRequest) {
 	ctx := c.Context()
 
 	pkgapp.NoteModifyLog(c.TraceID, c.User.UID, "FileSync", "", params.Vault)
@@ -684,7 +759,7 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 						Size:             fileSvc.Size,
 						UpdatedTimestamp: fileSvc.UpdatedTimestamp,
 					},
-				).WithVault(params.Vault), true, dto.FileSyncDelete)
+				).WithVault(params.Vault), true, FileSyncDelete)
 
 			} else {
 				// File does not exist, but we still need to record exclusion and broadcast delete message to ensure data consistency
@@ -709,7 +784,7 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 						Size:             0,
 						UpdatedTimestamp: 0,
 					},
-				).WithVault(params.Vault), true, dto.FileSyncDelete)
+				).WithVault(params.Vault), true, FileSyncDelete)
 			}
 		}
 	}
@@ -740,7 +815,8 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 			if fileSvc != nil && fileSvc.Action != "delete" {
 
 				messageQueue = append(messageQueue, dto.WSQueuedMessage{
-					Action: dto.FileSyncUpdate,
+						Context: params.Context,
+					Action: FileSyncUpdate,
 					Data: dto.FileSyncModifyMessage{
 						Path:             fileSvc.Path,
 						PathHash:         fileSvc.PathHash,
@@ -777,7 +853,8 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 			}
 			// 将消息添加到队列
 			messageQueue = append(messageQueue, dto.WSQueuedMessage{
-				Action: dto.FileSyncDelete,
+						Context: params.Context,
+				Action: FileSyncDelete,
 				Data: dto.FileSyncDeleteMessage{
 					Path:             file.Path,
 					PathHash:         file.PathHash,
@@ -816,21 +893,23 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 						}
 						// 将消息添加到队列而非立即发送
 						messageQueue = append(messageQueue, dto.WSQueuedMessage{
-							Action: dto.FileSyncUpdate,
+						Context: params.Context,
+							Action: FileSyncUpdate,
 							Data:   fileMessage,
 						})
 						needModifyCount++
 					} else {
 						// 服务端修改时间比客户端旧, 通知客户端上传文件
 						if pkgapp.VerifyPermissions(c.Scope, "ws", c.ClientType, "file_w") {
-							session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, cFile.Path, cFile.PathHash, cFile.ContentHash, cFile.Size, file.Ctime, cFile.Mtime)
+							session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, cFile.Path, cFile.PathHash, cFile.ContentHash, cFile.Size, file.Ctime, cFile.Mtime, params.Context)
 							if ferr != nil {
 								h.logError(c, "websocket_router.file.FileSync handleFileUploadSession err", ferr)
 								continue
 							}
 							// 将消息添加到队列而非立即发送
 							messageQueue = append(messageQueue, dto.WSQueuedMessage{
-								Action: dto.FileUpload,
+						Context: params.Context,
+								Action: FileUpload,
 								Data: dto.FileSyncUploadMessage{
 									Path:      session.Path,
 									PathHash:  session.PathHash,
@@ -852,7 +931,8 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 					// Add message to queue instead of sending immediately
 					// 将消息添加到队列而非立即发送
 					messageQueue = append(messageQueue, dto.WSQueuedMessage{
-						Action: dto.FileSyncMtime,
+						Context: params.Context,
+						Action: FileSyncMtime,
 						Data: dto.FileSyncMtimeMessage{
 							Path:             file.Path,
 							Ctime:            file.Ctime,
@@ -867,7 +947,8 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 				// 客户端没有的文件, 通知客户端下载文件
 				// 将消息添加到队列而非立即发送
 				messageQueue = append(messageQueue, dto.WSQueuedMessage{
-					Action: dto.FileSyncUpdate,
+						Context: params.Context,
+					Action: FileSyncUpdate,
 					Data: dto.FileSyncModifyMessage{
 						Path:             file.Path,
 						PathHash:         file.PathHash,
@@ -896,14 +977,15 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 			// Create upload session and return FileUpload message
 			// 创建上传会话并返回 FileUpload 消息
 			if hasWritePermission {
-				session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, file.Path, file.PathHash, file.ContentHash, file.Size, file.Ctime, file.Mtime)
+				session, ferr := h.handleFileUploadSessionCreate(c, params.Vault, file.Path, file.PathHash, file.ContentHash, file.Size, file.Ctime, file.Mtime, params.Context)
 				if ferr != nil {
 					h.logError(c, "websocket_router.file.FileSync handleFileUploadSession err", ferr)
 					continue
 				}
 				// Add message to queue instead of sending immediately
 				messageQueue = append(messageQueue, dto.WSQueuedMessage{
-					Action: dto.FileUpload,
+						Context: params.Context,
+					Action: FileUpload,
 					Data: dto.FileSyncUploadMessage{
 						Path:      session.Path,
 						PathHash:  session.PathHash,
@@ -931,23 +1013,76 @@ func (h *FileWSHandler) FileSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 			NeedSyncMtimeCount: needSyncMtimeCount,
 			NeedDeleteCount:    needDeleteCount,
 		},
-	).WithVault(params.Vault).WithContext(params.Context), dto.FileSyncEnd)
+	).WithVault(params.Vault).WithContext(params.Context), FileSyncEnd)
 
-	// Send queued messages in batches to reduce CPU/memory pressure
-	// 分批发送队列中的消息，以减轻 CPU 和内存压力
-	batchSize := 200
-	for i := 0; i < len(messageQueue); i += batchSize {
-		end := i + batchSize
-		if end > len(messageQueue) {
-			end = len(messageQueue)
+	// 在 End 消息后，启动受控分页发送流程
+	if len(messageQueue) > 0 {
+		pageSize := h.App.Config().App.SyncDownChunkNum
+		if pageSize <= 0 {
+			pageSize = 50 // 默认值防呆
 		}
-		for _, item := range messageQueue[i:end] {
-			c.ToResponse(code.Success.WithData(item.Data).WithVault(params.Vault).WithContext(params.Context), item.Action)
+		entry := &syncDownloadEntry{
+			Context:      params.Context,
+			TypeName:     "file",
+			Vault:        params.Vault,
+			MessageQueue: messageQueue,
+			PageSize:     pageSize,
+			CurrentPage:  0,
 		}
-		// Optional: slight pause could be added here if network congestion is a concern,
-		// but the primary goal is reducing serialization overhead per message block.
+		syncDownloadStore(params.Context, "file", entry)
+		// 默认不自动发送，等待客户端拉取
 	}
 }
+
+// FileSyncPageAck handles WebSocket messages for client page ACK
+// FileSyncPageAck 处理客户端发来的分页下载 ACK 消息
+func (h *FileWSHandler) FileSyncPageAck(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
+	params := &dto.SyncPageAckRequest{}
+	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
+	if !valid {
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileSyncPageAck.BindAndValid", msg)
+		return
+	}
+
+	entry, ok := syncDownloadGet(params.Context, "file")
+	if !ok {
+		h.App.Logger().Warn("FileSyncPageAck: sync download entry not found",
+			zap.String(logger.FieldTraceID, c.TraceID),
+			zap.String("context", params.Context))
+		return
+	}
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	if params.PageIndex == -1 {
+		sendSyncPage(c, entry)
+		return
+	}
+
+	if params.PageIndex != entry.CurrentPage {
+		h.App.Logger().Warn("FileSyncPageAck: page index mismatch",
+			zap.String(logger.FieldTraceID, c.TraceID),
+			zap.Int("expected", entry.CurrentPage),
+			zap.Int("got", params.PageIndex))
+		return
+	}
+
+	start := entry.CurrentPage * entry.PageSize
+	end := start + entry.PageSize
+	if end >= len(entry.MessageQueue) {
+		syncDownloadDelete(params.Context, "file")
+		h.App.Logger().Info("FileSyncPageAck: sync finished, cache cleared",
+			zap.String(logger.FieldTraceID, c.TraceID),
+			zap.String("context", params.Context))
+		return
+	}
+
+	entry.CurrentPage++
+	entry.UpdatedAt = time.Now()
+	sendSyncPage(c, entry)
+}
+
 
 // cleanupSession cleans up discarded upload sessions due to completion or timeout.
 // cleanupSession 清理因为完成或超时而废弃的上传会话。
@@ -1003,11 +1138,28 @@ func (h *FileWSHandler) handleFileUploadSessionTimeout(c *pkgapp.WebsocketClient
 
 // handleFileUploadSession initializes a file upload session and returns upload message.
 // handleFileUploadSession 初始化一个文件上传会话并返回上传消息.
-func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient, vault, path, pathHash, contentHash string, size, ctime, mtime int64) (*FileUploadBinaryChunkSession, error) {
+func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient, vault, path, pathHash, contentHash string, size, ctime, mtime int64, context string) (*FileUploadBinaryChunkSession, error) {
+	// Check if there is an active session for the same path hash, reuse it if attributes match
+	// 检查是否已存在相同路径哈希的活跃会话，如果属性一致则直接复用
+	if existingSession := c.Server.GetSessionByPathHash(c.User.ID, pathHash); existingSession != nil {
+		if session, ok := existingSession.(*FileUploadBinaryChunkSession); ok {
+			if session.ContentHash == contentHash && session.Vault == vault && session.Size == size {
+				h.App.Logger().Info("FileUploadSessionCreate: reusing existing active session for path hash",
+					zap.String("traceId", c.TraceID),
+					zap.Int64("uid", c.User.UID),
+					zap.String("sessionID", session.ID),
+					zap.String("path", path),
+				)
+				session.Context = context
+				return session, nil
+			}
+		}
+	}
+
 	// Clean up any existing stale sessions for the same file path hash to prevent resource leak and duplication
 	h.App.Logger().Info("FileUploadSessionCreate: cleaning existing stale sessions for path hash",
-		zap.String(logger.FieldTraceID, c.TraceID),
-		zap.Int64(logger.FieldUID, c.User.UID),
+		zap.String("traceId", c.TraceID),
+		zap.Int64("uid", c.User.UID),
 		zap.String("pathHash", pathHash),
 		zap.String("path", path),
 	)
@@ -1064,6 +1216,7 @@ func (h *FileWSHandler) handleFileUploadSessionCreate(c *pkgapp.WebsocketClient,
 		FileHandle:     nil, // Lazy creation in FileUploadChunkBinary // 在 FileUploadChunkBinary 中延迟创建
 		CreatedAt:      time.Now(),
 		uploadedChunks: make(map[uint32]struct{}),
+		Context:        context,
 	}
 	// Adjust chunk size based on file size
 	// 根据文件大小调整分块大小
@@ -1185,7 +1338,7 @@ func (h *FileWSHandler) handleFileChunkDownloadSendChunks(c *pkgapp.WebsocketCli
 		copy(packet[40:], chunkData[:n])
 
 		// 发送二进制消息
-		err = c.SendBinary(dto.VaultFileMsgType, packet)
+		err = c.SendBinary(VaultFileMsgType, packet)
 		if err != nil {
 			LogErrorWithLogger(logger, c, "sendFileChunks: failed to send chunk", err)
 			return
@@ -1208,9 +1361,9 @@ func (h *FileWSHandler) handleFileChunkDownloadSendChunks(c *pkgapp.WebsocketCli
 
 func (h *FileWSHandler) FileRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocketMessage) {
 	params := &dto.FileGetRequest{}
-	valid, errs := c.BindAndValid(msg.Data, params)
+	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileRePush.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.file.FileRePush.BindAndValid", msg)
 		return
 	}
 
@@ -1238,7 +1391,7 @@ func (h *FileWSHandler) FileRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 				Mtime:            fileSvc.Mtime,
 				UpdatedTimestamp: fileSvc.UpdatedTimestamp,
 			},
-		).WithVault(params.Vault), dto.FileSyncUpdate)
+		).WithVault(params.Vault), FileSyncUpdate)
 	} else {
 		// If file not found, send delete message to client to clean up local unauthorized creation
 		// 如果未找到文件，则向客户端发送删除消息，以清理本地未授权的创建
@@ -1247,7 +1400,7 @@ func (h *FileWSHandler) FileRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 				Path:     params.Path,
 				PathHash: params.PathHash,
 			},
-		).WithVault(params.Vault), string(dto.FileSyncDelete))
+		).WithVault(params.Vault), string(FileSyncDelete))
 	}
 }
 

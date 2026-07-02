@@ -12,12 +12,7 @@ type AppSettings struct {
 	// DefaultContextTimeout default context timeout duration
 	// DefaultContextTimeout 默认上下文超时时间
 	DefaultContextTimeout int `yaml:"default-context-timeout" default:"60"`
-	// LogSavePath log save path
-	// LogSavePath 日志保存路径
-	LogSavePath string `yaml:"log-save-fileurl"`
-	// LogFile log filename
-	// LogFile 日志文件名
-	LogFile string `yaml:"log-file"`
+
 	// TempPath upload temporary path
 	// TempPath 上传临时路径
 	TempPath string `yaml:"temp-path" default:"storage/temp"`
@@ -77,4 +72,10 @@ type AppSettings struct {
 	// ShortLink configurations
 	// 短链配置
 	ShortLink ShortLinkConfig `yaml:"short-link"`
+
+	FtsBleveEnabled  *bool `yaml:"fts-bleve-enabled" default:"true"`    // Bleve FTS enabled flag // 是否启用 Bleve 全文搜索（默认启用）
+	FtsBleveStoreRaw *bool `yaml:"fts-bleve-store-raw" default:"false"` // Bleve FTS store raw content flag // Bleve 全文搜索是否存储原始文本（默认启用为方案 B，若设为 false 则为仅索引不存储的方案 A）
+	SyncDownChunkNum int `yaml:"sync-down-chunk-num" default:"50"` // Serial download sync page chunk size // 串行下载同步的分块数量
+	SyncUpChunkNum   int `yaml:"sync-up-chunk-num" default:"100"`  // Serial upload sync batch size // 串行上传同步的分包大小
 }
+

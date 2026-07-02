@@ -36,7 +36,6 @@ func NewNoteHandler(a *app.App, wss *pkgapp.WebsocketServer) *NoteHandler {
 // @Description Get specific note content and metadata by path or path hash
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param params query dto.NoteGetRequest true "Get Parameters"
 // @Success 200 {object} pkgapp.Res{data=dto.NoteWithFileLinksResponse} "Success"
@@ -111,7 +110,6 @@ func (h *NoteHandler) Get(c *gin.Context) {
 // @Description Get note list for current user with pagination
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param params query dto.NoteListRequest true "Query Parameters"
 // @Param pagination query pkgapp.PaginationRequest true "Pagination Parameters"
@@ -129,6 +127,15 @@ func (h *NoteHandler) List(c *gin.Context) {
 		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
 		return
 	}
+
+	// Log incoming query parameters
+	// 记录请求传入的查询参数
+	h.App.Logger().Info("NoteHandler.List request parameters",
+		zap.String("vault", params.Vault),
+		zap.String("keyword", params.Keyword),
+		zap.String("searchMode", params.SearchMode),
+		zap.Bool("isRecycle", params.IsRecycle),
+	)
 
 	// Get UID
 	// 获取用户 ID
@@ -161,7 +168,6 @@ func (h *NoteHandler) List(c *gin.Context) {
 // @Description Handle note creation, modification, or renaming (identified by path change)
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.NoteModifyOrCreateRequest true "Note Content"
@@ -262,7 +268,6 @@ func (h *NoteHandler) CreateOrUpdate(c *gin.Context) {
 // @Description Move note to trash
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param params query dto.NoteDeleteRequest true "Delete Parameters"
 // @Success 200 {object} pkgapp.Res{data=dto.NoteDTO} "Success"
@@ -336,7 +341,6 @@ func (h *NoteHandler) Delete(c *gin.Context) {
 // @Description Restore deleted note from trash
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param params body dto.NoteRestoreRequest true "Restore Parameters"
 // @Success 200 {object} pkgapp.Res{data=dto.NoteDTO} "Success"
@@ -411,7 +415,6 @@ func (h *NoteHandler) Restore(c *gin.Context) {
 // @Description Update or delete note frontmatter fields
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.NotePatchFrontmatterRequest  true "Frontmatter Modification Parameters"
@@ -471,7 +474,6 @@ func (h *NoteHandler) PatchFrontmatter(c *gin.Context) {
 // @Description Append content to the end of a note
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.NoteAppendRequest true "Append Parameters"
@@ -531,7 +533,6 @@ func (h *NoteHandler) Append(c *gin.Context) {
 // @Description Insert content at the beginning of a note (after frontmatter)
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.NotePrependRequest true "Prepend Parameters"
@@ -591,7 +592,6 @@ func (h *NoteHandler) Prepend(c *gin.Context) {
 // @Description Perform find and replace operation in a note, supporting regular expressions
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.NoteReplaceRequest true "Find and Replace Parameters"
@@ -653,7 +653,6 @@ func (h *NoteHandler) Replace(c *gin.Context) {
 // @Description Rename a note to a new path
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.NoteRenameRequest true "Rename Parameters"
@@ -730,7 +729,6 @@ func (h *NoteHandler) Rename(c *gin.Context) {
 // @Description Get all other notes that link to the specified note
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param params query dto.NoteLinkQueryRequest true "Query Parameters"
 // @Success 200 {object} pkgapp.Res{data=[]dto.NoteLinkItem} "Success"
@@ -787,7 +785,6 @@ func (h *NoteHandler) GetBacklinks(c *gin.Context) {
 // @Description Get other notes that the specified note links to
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Produce json
 // @Param params query dto.NoteLinkQueryRequest true "Query Parameters"
 // @Success 200 {object} pkgapp.Res{data=[]dto.NoteLinkItem} "Success"
@@ -854,7 +851,6 @@ func (h *NoteHandler) logError(ctx context.Context, method string, err error) {
 // @Description Permanently clear selected notes from recycle bin
 // @Tags Note
 // @Security UserAuthToken
-// @Param token header string true "Auth Token"
 // @Accept json
 // @Produce json
 // @Param params body dto.NoteRecycleClearRequest true "Clear Parameters"

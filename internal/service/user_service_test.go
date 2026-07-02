@@ -11,6 +11,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/internal/domain"
 	domainmocks "github.com/haierkeys/fast-note-sync-service/internal/domain/mocks"
 	"github.com/haierkeys/fast-note-sync-service/internal/dto"
+	"github.com/haierkeys/fast-note-sync-service/pkg/app"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
 	"github.com/haierkeys/fast-note-sync-service/pkg/code"
 	"github.com/stretchr/testify/assert"
@@ -46,6 +47,13 @@ func (m *mockUserTokenService) Create(ctx context.Context, uid int64, params *dt
 
 func (m *mockUserTokenService) CreateForLogin(ctx context.Context, uid int64, clientType, ip, userAgent string) (*domain.AuthToken, string, error) {
 	return &domain.AuthToken{ID: 1, UID: uid, Status: 1}, "test-token", nil
+}
+
+func (m *mockUserTokenService) RotateForLogin(ctx context.Context, uid int64, tokenID int64, ip, userAgent string) (*domain.AuthToken, string, error) {
+	if tokenID == 999 {
+		return nil, "", errors.New("mock rotate error")
+	}
+	return &domain.AuthToken{ID: tokenID, UID: uid, Status: 1, ClientType: "webgui"}, "rotated-token", nil
 }
 
 func (m *mockUserTokenService) ListByUser(ctx context.Context, uid int64) ([]*dto.TokenResponse, error) {
@@ -129,25 +137,6 @@ func TestUserService_Register_Success(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestUserService_Register_ClientRestricted verifies error when clientType is not WebGui.
-// TestUserService_Register_ClientRestricted 验证客户端类型非 WebGui 时返回错误。
-func TestUserService_Register_ClientRestricted(t *testing.T) {
-	mockRepo := new(domainmocks.MockUserRepository)
-
-	svc := newUserSvc(mockRepo, true)
-	_, err := svc.Register(context.Background(), &dto.UserCreateRequest{
-		Email:           "a@b.com",
-		Username:        "user1",
-		Password:        "pass",
-		ConfirmPassword: "pass",
-	}, "127.0.0.1", "obsidian", "test-agent")
-
-	assert.ErrorIs(t, err, code.ErrorUserRegister)
-	assert.Contains(t, err.Error(), "Only WebGui is allowed for registration")
-	mockRepo.AssertExpectations(t)
-}
-
-
 // TestUserService_Register_Disabled verifies error when registration is disabled.
 // TestUserService_Register_Disabled 验证注册功能关闭时返回错误。
 func TestUserService_Register_Disabled(t *testing.T) {
@@ -226,6 +215,212 @@ func TestUserService_Register_UsernameExists(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
+// --- Create ---
+
+// TestUserService_Create_Success verifies successful create user.
+func TestUserService_Create_Success(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	params := &dto.UserCreateRequest{
+		Email:           "test@example.com",
+		Username:        "testuser",
+		Password:        "password123",
+		ConfirmPassword: "password123",
+	}
+
+	// Email and username both not found (available)
+	// 邮箱和用户名均未注册（可用）
+	mockRepo.On("GetByEmail", mock.Anything, params.Email).
+		Return(nil, gorm.ErrRecordNotFound)
+	mockRepo.On("GetByUsername", mock.Anything, params.Username).
+		Return(nil, gorm.ErrRecordNotFound)
+
+	created := &domain.User{UID: 1, Email: params.Email, Username: params.Username}
+	mockRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.User")).
+		Return(created, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	result, err := svc.Create(context.Background(), params)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUserService_Create_PasswordMismatch verifies error when passwords do not match.
+func TestUserService_Create_PasswordMismatch(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	svc := newUserSvc(mockRepo, true)
+	_, err := svc.Create(context.Background(), &dto.UserCreateRequest{
+		Email:           "a@b.com",
+		Username:        "validuser",
+		Password:        "pass1",
+		ConfirmPassword: "pass2",
+	})
+
+	assert.ErrorIs(t, err, code.ErrorUserPasswordNotMatch)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUserService_Create_EmailExists verifies error if a user already exists with this email.
+func TestUserService_Create_EmailExists(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	mockRepo.On("GetByEmail", mock.Anything, "dup@example.com").
+		Return(&domain.User{UID: 99, Email: "dup@example.com"}, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	_, err := svc.Create(context.Background(), &dto.UserCreateRequest{
+		Email:           "dup@example.com",
+		Username:        "newuser",
+		Password:        "password123",
+		ConfirmPassword: "password123",
+	})
+
+	assert.ErrorIs(t, err, code.ErrorUserEmailAlreadyExists)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUserService_Create_UsernameExists verifies error when username is already taken.
+func TestUserService_Create_UsernameExists(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	// Email is available, but username is taken
+	// 邮箱可用，但用户名已被占用
+	mockRepo.On("GetByEmail", mock.Anything, "new@example.com").
+		Return(nil, gorm.ErrRecordNotFound)
+	mockRepo.On("GetByUsername", mock.Anything, "takenuser").
+		Return(&domain.User{UID: 99, Username: "takenuser"}, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	_, err := svc.Create(context.Background(), &dto.UserCreateRequest{
+		Email:           "new@example.com",
+		Username:        "takenuser",
+		Password:        "password123",
+		ConfirmPassword: "password123",
+	})
+
+	assert.ErrorIs(t, err, code.ErrorUserAlreadyExists)
+	mockRepo.AssertExpectations(t)
+}
+
+// --- Update ---
+
+// TestUserService_Update_Success verifies successful update user.
+func TestUserService_Update_Success(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	params := &dto.UserUpdateRequest{
+		UID:      1,
+		Email:    "test@example.com",
+		Username: "testuser",
+		Password: "password123",
+	}
+
+	// Updated user exists
+	updated := &domain.User{UID: params.UID, Email: params.Email, Username: params.Username}
+
+	mockRepo.On("GetByUID", mock.Anything, params.UID, mock.Anything).
+		Return(updated, nil)
+
+	// Email and username both not found (available)
+	// 邮箱和用户名均未注册（可用）
+	mockRepo.On("GetByEmail", mock.Anything, params.Email).
+		Return(nil, gorm.ErrRecordNotFound)
+	mockRepo.On("GetByUsername", mock.Anything, params.Username).
+		Return(nil, gorm.ErrRecordNotFound)
+
+	mockRepo.On("Update", mock.Anything, mock.AnythingOfType("*domain.User")).
+		Return(updated, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	err := svc.Update(context.Background(), params)
+
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUserService_Update_Wrong_Uid verifies when user not exists.
+func TestUserService_Update_Wrong_Uid(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	params := &dto.UserUpdateRequest{
+		UID:      1,
+		Email:    "test@example.com",
+		Username: "testuser",
+		Password: "password123",
+	}
+
+	mockRepo.On("GetByUID", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, gorm.ErrRecordNotFound)
+
+	svc := newUserSvc(mockRepo, true)
+	err := svc.Update(context.Background(), params)
+
+	assert.ErrorIs(t, err, code.ErrorUserNotFound)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUserService_Update_EmailExists verifies error if a user already exists with this email.
+func TestUserService_Update_EmailExists(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	params := &dto.UserUpdateRequest{
+		UID:      1,
+		Email:    "test@example.com",
+		Username: "testuser",
+		Password: "password123",
+	}
+
+	// Updated user exists
+	updated := &domain.User{UID: params.UID, Email: params.Email, Username: params.Username}
+
+	mockRepo.On("GetByUID", mock.Anything, params.UID, mock.Anything).
+		Return(updated, nil)
+
+	// The email is already in use by an existing user.
+	mockRepo.On("GetByEmail", mock.Anything, params.Email).
+		Return(&domain.User{UID: 99, Email: params.Email}, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	err := svc.Update(context.Background(), params)
+
+	assert.ErrorIs(t, err, code.ErrorUserEmailAlreadyExists)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUserService_Update_UsernameExists verifies error if a user already exists with this username.
+func TestUserService_Update_UsernameExists(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+
+	params := &dto.UserUpdateRequest{
+		UID:      1,
+		Email:    "test@example.com",
+		Username: "testuser",
+		Password: "password123",
+	}
+
+	// Updated user exists
+	updated := &domain.User{UID: params.UID, Email: params.Email, Username: params.Username}
+
+	mockRepo.On("GetByUID", mock.Anything, params.UID, mock.Anything).
+		Return(updated, nil)
+
+	mockRepo.On("GetByEmail", mock.Anything, params.Email).
+		Return(nil, gorm.ErrRecordNotFound)
+
+	// The username is already in use by an existing user.
+	mockRepo.On("GetByUsername", mock.Anything, params.Username).
+		Return(&domain.User{UID: 99, Username: params.Username}, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	err := svc.Update(context.Background(), params)
+
+	assert.ErrorIs(t, err, code.ErrorUserAlreadyExists)
+	mockRepo.AssertExpectations(t)
+}
+
 // --- Login ---
 
 // TestUserService_Login_ByEmail_Success verifies successful login using email.
@@ -283,6 +478,65 @@ func TestUserService_Login_WrongPassword(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
+// TestUserService_Login_Rotate_Success verifies token rotation during login.
+// TestUserService_Login_Rotate_Success 验证登录时令牌成功轮转。
+func TestUserService_Login_Rotate_Success(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+	hashedPwd := "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi" // "password"
+
+	user := &domain.User{
+		UID:      1,
+		Email:    "test@example.com",
+		Username: "testuser",
+		Password: hashedPwd,
+	}
+	mockRepo.On("GetByEmail", mock.Anything, "test@example.com").
+		Return(user, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	result, err := svc.Login(context.Background(), &dto.UserLoginRequest{
+		Credentials: "test@example.com",
+		Password:    "password",
+		TokenID:     123,
+	}, "127.0.0.1", "webgui", "test-agent")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "rotated-token", result.Token)
+	assert.Equal(t, int64(123), result.TokenID)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUserService_Login_Rotate_Fallback verifies token creation fallback when rotation fails.
+// TestUserService_Login_Rotate_Fallback 验证轮转失败时降级创建新令牌。
+func TestUserService_Login_Rotate_Fallback(t *testing.T) {
+	mockRepo := new(domainmocks.MockUserRepository)
+	hashedPwd := "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi" // "password"
+
+	user := &domain.User{
+		UID:      1,
+		Email:    "test@example.com",
+		Username: "testuser",
+		Password: hashedPwd,
+	}
+	mockRepo.On("GetByEmail", mock.Anything, "test@example.com").
+		Return(user, nil)
+
+	svc := newUserSvc(mockRepo, true)
+	// mockUserTokenService 遇到 TokenID=999 时会模拟报错，并降级
+	result, err := svc.Login(context.Background(), &dto.UserLoginRequest{
+		Credentials: "test@example.com",
+		Password:    "password",
+		TokenID:     999,
+	}, "127.0.0.1", "webgui", "test-agent")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "test-token", result.Token) // Fallback creates new token returning "test-token"
+	assert.Equal(t, int64(1), result.TokenID)   // Mock created token has ID: 1
+	mockRepo.AssertExpectations(t)
+}
+
 // --- GetInfo ---
 
 // TestUserService_GetInfo_Success verifies successful user info retrieval.
@@ -291,7 +545,7 @@ func TestUserService_GetInfo_Success(t *testing.T) {
 	mockRepo := new(domainmocks.MockUserRepository)
 
 	user := &domain.User{UID: 1, Email: "a@b.com", Username: "user1"}
-	mockRepo.On("GetByUID", mock.Anything, int64(1)).
+	mockRepo.On("GetByUID", mock.Anything, int64(1), mock.Anything).
 		Return(user, nil)
 
 	svc := newUserSvc(mockRepo, true)
@@ -308,7 +562,7 @@ func TestUserService_GetInfo_Success(t *testing.T) {
 func TestUserService_GetInfo_NotFound(t *testing.T) {
 	mockRepo := new(domainmocks.MockUserRepository)
 
-	mockRepo.On("GetByUID", mock.Anything, int64(99)).
+	mockRepo.On("GetByUID", mock.Anything, int64(99), mock.Anything).
 		Return(nil, gorm.ErrRecordNotFound)
 
 	svc := newUserSvc(mockRepo, true)
@@ -330,7 +584,7 @@ func TestUserService_ChangePassword_Success(t *testing.T) {
 		UID:      1,
 		Password: "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi", // "password"
 	}
-	mockRepo.On("GetByUID", mock.Anything, int64(1)).Return(user, nil)
+	mockRepo.On("GetByUID", mock.Anything, int64(1), mock.Anything).Return(user, nil)
 	mockRepo.On("UpdatePassword", mock.Anything, mock.AnythingOfType("string"), int64(1)).Return(nil)
 
 	svc := newUserSvc(mockRepo, true)
@@ -342,6 +596,104 @@ func TestUserService_ChangePassword_Success(t *testing.T) {
 
 	assert.NoError(t, err)
 	mockRepo.AssertExpectations(t)
+}
+
+// --- GetList ---
+
+// TestUserService_GetList verifies returning users list with pagination
+func TestUserService_GetList(t *testing.T) {
+	// Domain data
+	mockUsers := []*domain.User{
+		{UID: 1, Email: "user1@example.com", Username: "user1"},
+		{UID: 2, Email: "user2@example.com", Username: "user2"},
+	}
+
+	// DTOs
+	expectedDTOs := []*dto.UserDTO{
+		{UID: 1, Email: "user1@example.com", Username: "user1"},
+		{UID: 2, Email: "user2@example.com", Username: "user2"},
+	}
+
+	dbError := errors.New("database connection failed")
+
+	// cases
+	tests := []struct {
+		name           string
+		pager          *app.Pager
+		mockSetup      func(m *domainmocks.MockUserRepository)
+		expectedResult []*dto.UserDTO
+		expectedTotal  int64
+		expectedErr    error
+	}{
+		{
+			name: "Success - First page",
+			pager: &app.Pager{
+				Page:     1,
+				PageSize: 10,
+			},
+			mockSetup: func(m *domainmocks.MockUserRepository) {
+				// expect: offset = 0, limit = 10
+				m.On("GetList", mock.Anything, 0, 10).
+					Return(mockUsers, 25, nil) // total in db = 25
+			},
+			expectedResult: expectedDTOs,
+			expectedTotal:  25,
+			expectedErr:    nil,
+		},
+		{
+			name: "Success - second page",
+			pager: &app.Pager{
+				Page:     2,
+				PageSize: 10,
+			},
+			mockSetup: func(m *domainmocks.MockUserRepository) {
+				// expect: offset = 10, limit = 10
+				m.On("GetList", mock.Anything, 10, 10).
+					Return(mockUsers, 25, nil)
+			},
+			expectedResult: expectedDTOs,
+			expectedTotal:  25,
+			expectedErr:    nil,
+		},
+		{
+			name: "Failure - error db",
+			pager: &app.Pager{
+				Page:     1,
+				PageSize: 10,
+			},
+			mockSetup: func(m *domainmocks.MockUserRepository) {
+				m.On("GetList", mock.Anything, 0, 10).
+					Return(nil, 0, dbError)
+			},
+			expectedResult: nil,
+			expectedTotal:  0,
+			expectedErr:    code.ErrorDBQuery,
+		},
+	}
+
+	// run all test cases
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := new(domainmocks.MockUserRepository)
+			tt.mockSetup(mockRepo)
+			svc := newUserSvc(mockRepo, true)
+
+			result, total, err := svc.GetList(context.Background(), tt.pager)
+
+			// check error
+			if tt.expectedErr != nil {
+				assert.ErrorIs(t, err, tt.expectedErr)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// check total and result
+			assert.Equal(t, tt.expectedTotal, total)
+			assert.Equal(t, tt.expectedResult, result)
+
+			mockRepo.AssertExpectations(t)
+		})
+	}
 }
 
 // --- IsRegisterEnabled ---

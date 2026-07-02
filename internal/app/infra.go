@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/haierkeys/fast-note-sync-service/internal/dao"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
 	"github.com/haierkeys/fast-note-sync-service/pkg/fileurl"
+	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 	"github.com/haierkeys/fast-note-sync-service/pkg/workerpool"
 	"github.com/haierkeys/fast-note-sync-service/pkg/writequeue"
 	"go.uber.org/zap"
@@ -26,6 +28,9 @@ type Infra struct {
 
 // initInfra initializes infrastructure components
 func initInfra(cfg *AppConfig, logger *zap.Logger, db *gorm.DB) (*Infra, error) {
+	// 设置机器唯一标识退回持久化的隐藏文件路径在 config 目录下
+	util.SetUUIDPath(filepath.Join(filepath.Dir(cfg.File), ".server_uuid"))
+
 	infra := &Infra{
 		config:         cfg,
 		logger:         logger,
@@ -42,18 +47,21 @@ func initInfra(cfg *AppConfig, logger *zap.Logger, db *gorm.DB) (*Infra, error) 
 	infra.writeQueueMgr = writequeue.New(&wqConfig, logger)
 
 	// DAO
-	// DAO
 	dbCfg := cfg.Database
 	dbCfg.RunMode = cfg.Server.RunMode
 
 	userDbCfg := cfg.UserDatabase
 	userDbCfg.RunMode = cfg.Server.RunMode
 
+	// Bleve Manager
+	bleveMgr := dao.NewBleveManager(cfg.App.FtsBleveEnabled, cfg.App.FtsBleveStoreRaw, logger)
+
 	infra.Dao = dao.New(db, context.Background(),
 		dao.WithConfig(&dbCfg),
 		dao.WithUserDatabaseConfig(&userDbCfg),
 		dao.WithLogger(logger),
 		dao.WithWriteQueueManager(infra.writeQueueMgr),
+		dao.WithBleveManager(bleveMgr),
 	)
 
 	// TokenManager

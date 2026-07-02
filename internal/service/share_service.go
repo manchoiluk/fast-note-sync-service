@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/haierkeys/fast-note-sync-service/pkg/timex"
 	"github.com/haierkeys/fast-note-sync-service/pkg/util"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // attachmentRegex regular expression for attachment links
@@ -37,7 +39,34 @@ var (
 	// htmlImageRegex regular expression for html images
 	// htmlImageRegex html 图片正则表达式
 	htmlImageRegex = regexp.MustCompile(`(?i)<img\b([^>]*?)\bsrc\s*=\s*(['"])(.*?)['"]([^>]*)>`)
+	// htmlVideoRegex regular expression for html video tags whose src is on
+	// the tag itself (the alternative form using nested <source> children is
+	// captured separately by htmlSourceRegex below).
+	// htmlVideoRegex 匹配 src 写在标签自身上的 HTML <video>（嵌套 <source>
+	// 形式由下方 htmlSourceRegex 单独捕获）。
+	htmlVideoRegex = regexp.MustCompile(`(?i)<video\b([^>]*?)\bsrc\s*=\s*(['"])(.*?)['"]([^>]*)>`)
+	// htmlAudioRegex regular expression for html audio tags whose src is on
+	// the tag itself.
+	// htmlAudioRegex 匹配 src 写在标签自身上的 HTML <audio>。
+	htmlAudioRegex = regexp.MustCompile(`(?i)<audio\b([^>]*?)\bsrc\s*=\s*(['"])(.*?)['"]([^>]*)>`)
+	// htmlSourceRegex regular expression for the <source> tag, typically
+	// nested inside <video>/<audio>; commonly written self-closing.
+	// htmlSourceRegex 匹配 <source> 标签，通常嵌套在 <video>/<audio> 内，且
+	// 多以自闭合形式书写。
+	htmlSourceRegex = regexp.MustCompile(`(?i)<source\b([^>]*?)\bsrc\s*=\s*(['"])(.*?)['"]([^>]*)>`)
 )
+
+// htmlMediaRegexes lists the HTML media tags whose `src` attribute should be
+// extracted as a shared-note file reference and rewritten to a share API URL
+// during the share render pipeline.
+//
+// htmlMediaRegexes 列出在分享渲染流程中需要将 src 属性当作分享笔记文件引用
+// 提取并改写为分享 API URL 的 HTML 媒体标签。
+var htmlMediaRegexes = []*regexp.Regexp{
+	htmlVideoRegex,
+	htmlAudioRegex,
+	htmlSourceRegex,
+}
 
 // ShareService defines the share business service interface
 // ShareService 定义分享业务服务接口
@@ -219,11 +248,15 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 	// expiresAt 过期时间
 	expiresAt := time.Now().Add(expiry)
 
-	// pwdMd5 password MD5
-	// pwdMd5 密码 MD5
-	pwdMd5 := ""
+	// pwdHash password bcrypt hash
+	// pwdHash 密码 bcrypt 哈希值
+	pwdHash := ""
 	if password != "" {
-		pwdMd5 = util.EncodeMD5(password)
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, err
+		}
+		pwdHash = string(hash)
 	}
 
 	share := &domain.UserShare{
@@ -233,7 +266,7 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 		Resources: resolvedResources,
 		Status:    1,
 		ExpiresAt: expiresAt,
-		Password:  pwdMd5,
+		Password:  pwdHash,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -259,7 +292,7 @@ func (s *shareService) ShareGenerate(ctx context.Context, uid int64, vaultName s
 		ID:         mainID,
 		Type:       mainType,
 		Token:      token,
-		IsPassword: pwdMd5 != "",
+		IsPassword: pwdHash != "",
 		ExpiresAt:  expiresAt,
 		ShortLink:  share.ShortLink,
 	}, nil
@@ -287,14 +320,37 @@ func (s *shareService) VerifyShare(ctx context.Context, token string, rid string
 	// 添加限速延迟防止暴力枚举攻击
 	time.Sleep(time.Millisecond * 100)
 
-	// Add password verification logic
-	// 增加密码校验逻辑
+	// Add password verification logic with upgrade support
+	// 增加密码校验与升级逻辑
 	if share.Password != "" {
 		if password == "" {
 			return nil, domain.ErrSharePasswordRequired
 		}
-		if util.EncodeMD5(password) != share.Password {
-			return nil, domain.ErrSharePasswordInvalid
+
+		// 1. Try bcrypt verification first
+		// 1. 优先尝试 bcrypt 验证
+		err := bcrypt.CompareHashAndPassword([]byte(share.Password), []byte(password))
+		if err != nil {
+			// 2. If it fails and the stored hash length is 32, it might be the old MD5 hash
+			// 2. 如果验证失败且存储的哈希长度为 32，可能为旧的 MD5 哈希
+			if len(share.Password) == 32 {
+				if util.EncodeMD5(password) == share.Password {
+					// 3. Verification succeeds, silently upgrade the password hash to bcrypt in a background goroutine
+					// 3. 验证成功，在后台协程中将密码哈希静默升级为 bcrypt
+					go func(uid, shareID int64, plainPwd string) {
+						newHash, err := bcrypt.GenerateFromPassword([]byte(plainPwd), bcrypt.DefaultCost)
+						if err == nil {
+							// Update password hash in db, using background context to prevent cancellation
+							// 在 db 中更新密码哈希，使用后台 context 避免因请求结束被取消
+							_ = s.repo.UpdatePassword(context.Background(), uid, shareID, string(newHash))
+						}
+					}(share.UID, share.ID, password)
+				} else {
+					return nil, domain.ErrSharePasswordInvalid
+				}
+			} else {
+				return nil, domain.ErrSharePasswordInvalid
+			}
 		}
 	}
 
@@ -403,11 +459,15 @@ func (s *shareService) UpdateSharePassword(ctx context.Context, uid int64, vault
 		return code.ErrorShareNotFound
 	}
 
-	pwdMd5 := ""
+	pwdHash := ""
 	if password != "" {
-		pwdMd5 = util.EncodeMD5(password)
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		pwdHash = string(hash)
 	}
-	return s.repo.UpdatePassword(ctx, uid, share.ID, pwdMd5)
+	return s.repo.UpdatePassword(ctx, uid, share.ID, pwdHash)
 }
 
 // ListShares lists all shares of a user with sorting, pagination and fills in resource titles
@@ -789,6 +849,21 @@ func (s *shareService) GetSharedNote(ctx context.Context, shareToken string, not
 	})
 	newContent = rewriteMarkdownImageLinks(newContent, fileRefs, shareToken, password)
 	newContent = rewriteHTMLImageSources(newContent, fileRefs, shareToken, password)
+	// Rewrite any inline HTML <video>/<audio>/<source> the user wrote
+	// directly in their note. Each tag has the same `src` capture shape as
+	// <img>, so reuse rewriteHTMLMediaSources for all three. This pairs with
+	// the htmlMediaRegexes loop in extractSharedNoteFileRefs which gates
+	// share authorization; without the rewrite, src would still point at the
+	// raw vault path and the share viewer's <video>/<audio> player could not
+	// fetch the file (it has no auth context for the vault file route).
+	// 把用户直接写在笔记里的内联 HTML <video>/<audio>/<source> 一并改写。
+	// 三者 src 的捕获形态与 <img> 完全一致，因此复用 rewriteHTMLMediaSources。
+	// 该步骤与 extractSharedNoteFileRefs 中的 htmlMediaRegexes 循环成对使用：
+	// 提取负责把 src 路径放进分享授权资源，重写则把 src 替换为分享 API URL，
+	// 否则分享视图里的播放器拿到的是原始 vault 路径，没有授权也就无法加载。
+	newContent = rewriteHTMLMediaSources(newContent, htmlVideoRegex, "video", fileRefs, shareToken, password)
+	newContent = rewriteHTMLMediaSources(newContent, htmlAudioRegex, "audio", fileRefs, shareToken, password)
+	newContent = rewriteHTMLMediaSources(newContent, htmlSourceRegex, "source", fileRefs, shareToken, password)
 	noteDTO.Content = newContent
 
 	return noteDTO, nil
@@ -887,6 +962,36 @@ func extractSharedNoteFileRefs(content string) []string {
 		refs = append(refs, ref)
 	}
 
+	// HTML media tags (<video src=...>, <audio src=...>, <source src=...>)
+	// share the same `src` capture position as <img>, so a single loop over
+	// htmlMediaRegexes is enough to extract their refs into the file map.
+	// Without this, shared notes containing raw HTML like
+	//   <video src="assets/clip.mp4" controls></video>
+	// would never have "assets/clip.mp4" added to fileLinks, leaving the
+	// downstream rewriter unable to swap the path for an authorized share
+	// API URL and the embedded player unable to load the file.
+	// HTML 媒体标签（<video src=...>、<audio src=...>、<source src=...>）的
+	// `src` 捕获位与 <img> 一致，因此遍历 htmlMediaRegexes 即可。如果不在此
+	// 处提取，分享笔记中如下这类原生 HTML 的 src 永远不会进入 fileLinks，
+	// 后续的重写器也就无法把路径替换为带授权信息的分享 API URL，前端的播放
+	// 器自然就加载不到文件。
+	for _, re := range htmlMediaRegexes {
+		for _, match := range re.FindAllStringSubmatch(content, -1) {
+			if len(match) < 4 {
+				continue
+			}
+			ref := strings.TrimSpace(match[3])
+			if ref == "" || !isLocalSharePath(ref) {
+				continue
+			}
+			if _, ok := seen[ref]; ok {
+				continue
+			}
+			seen[ref] = struct{}{}
+			refs = append(refs, ref)
+		}
+	}
+
 	return refs
 }
 
@@ -939,6 +1044,23 @@ targetStart:
 	return raw[start:end], start, end
 }
 
+// detectMediaKindByExt returns "image", "video", "audio", or "" based on the
+// file extension of p. Extensions are matched case-insensitively.
+// detectMediaKindByExt 根据 p 的扩展名返回 "image"、"video"、"audio" 或 ""，
+// 大小写不敏感。
+func detectMediaKindByExt(p string) string {
+	ext := strings.ToLower(filepath.Ext(p))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp":
+		return "image"
+	case ".mp4", ".webm", ".mov", ".mkv", ".avi", ".ogv":
+		return "video"
+	case ".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg":
+		return "audio"
+	}
+	return ""
+}
+
 func rewriteMarkdownImageLinks(content string, fileRefs map[string]*domain.File, shareToken string, password string) string {
 	return markdownImageRegex.ReplaceAllStringFunc(content, func(match string) string {
 		submatches := markdownImageRegex.FindStringSubmatch(match)
@@ -956,13 +1078,37 @@ func rewriteMarkdownImageLinks(content string, fileRefs map[string]*domain.File,
 			return match
 		}
 
-		replacementTarget := buildSharedFileAPIURL(file.ID, shareToken, password)
+		apiURL := buildSharedFileAPIURL(file.ID, shareToken, password)
+		alt := submatches[1]
+
+		// Dispatch by file extension so that markdown image syntax pointing
+		// at a video or audio file (e.g. `![alt](clip.mp4)`) is rendered as
+		// a proper <video>/<audio> HTML element in the share view, instead
+		// of a broken <img>. This mirrors the wiki-style ![[]] dispatch
+		// already done in the attachment rewriter above, and is the server-
+		// side counterpart of the webgui's rewriteMarkdownImageLinks media
+		// dispatch.
+		// 按文件扩展名分发：让 Markdown 图片语法指向视频/音频的引用
+		// （如 `![alt](clip.mp4)`）在分享视图中渲染为 <video>/<audio> HTML，
+		// 而不是坏掉的 <img>。与上面 wiki 风格 ![[]] 附件重写器的分发逻辑
+		// 一致，也是 webgui 端 rewriteMarkdownImageLinks 媒体分发的服务端
+		// 对应物。
+		switch detectMediaKindByExt(file.Path) {
+		case "video":
+			return `<video src="` + apiURL + `" controls style="max-width:100%"></video>`
+		case "audio":
+			return `<audio src="` + apiURL + `" controls></audio>`
+		}
+
+		// Image (default) — preserve the original markdown image form, only
+		// substituting the URL.
+		replacementTarget := apiURL
 		rawTarget := submatches[2][start:end]
 		if strings.HasPrefix(rawTarget, "<") && strings.HasSuffix(rawTarget, ">") {
 			replacementTarget = "<" + replacementTarget + ">"
 		}
 
-		return "![" + submatches[1] + "](" + submatches[2][:start] + replacementTarget + submatches[2][end:] + ")"
+		return "![" + alt + "](" + submatches[2][:start] + replacementTarget + submatches[2][end:] + ")"
 	})
 }
 
@@ -979,6 +1125,42 @@ func rewriteHTMLImageSources(content string, fileRefs map[string]*domain.File, s
 		}
 
 		return "<img" + submatches[1] + "src=" + submatches[2] + buildSharedFileAPIURL(file.ID, shareToken, password) + submatches[2] + submatches[4] + ">"
+	})
+}
+
+// rewriteHTMLMediaSources rewrites the `src` attribute on every HTML media
+// tag matched by `re` (e.g. <video>, <audio>, <source>) to the per-file
+// share API URL when the original src resolves through fileRefs. The match
+// shape is identical to htmlImageRegex (groups: beforeSrc, quote, rawSrc,
+// afterSrc), so the replacement reuses the same template, including
+// preservation of any trailing `/` from a self-closing form like
+// `<source ... />` (which falls inside `afterSrc`).
+//
+// This is the pipeline counterpart of extractSharedNoteFileRefs's media
+// loop: extraction populates fileRefs, rewriting then swaps paths for
+// authorized share URLs so the embedded player can fetch the file.
+//
+// rewriteHTMLMediaSources 将匹配到的 HTML 媒体标签（<video>/<audio>/<source>）
+// 的 src 属性改写为按文件 ID 生成的分享 API URL；正则的捕获位与
+// htmlImageRegex 完全一致，所以替换模板可以复用，包括把 `<source ... />`
+// 这种自闭合形式的尾部 `/`（落在 afterSrc 中）保留下来。
+//
+// 该函数与 extractSharedNoteFileRefs 中的媒体提取循环成对使用：先在提取阶段
+// 把 src 加入 fileRefs，然后在此处把 src 替换为带授权的分享 URL，前端播放器
+// 才能拉到对应文件。
+func rewriteHTMLMediaSources(content string, re *regexp.Regexp, tagName string, fileRefs map[string]*domain.File, shareToken string, password string) string {
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		submatches := re.FindStringSubmatch(match)
+		if len(submatches) < 5 {
+			return match
+		}
+
+		file := fileRefs[strings.TrimSpace(submatches[3])]
+		if file == nil {
+			return match
+		}
+
+		return "<" + tagName + submatches[1] + "src=" + submatches[2] + buildSharedFileAPIURL(file.ID, shareToken, password) + submatches[2] + submatches[4] + ">"
 	})
 }
 
@@ -1027,6 +1209,19 @@ func buildSharePathCandidates(notePath string, rawRef string) []string {
 	ref := strings.TrimSpace(strings.ReplaceAll(rawRef, "\\", "/"))
 	if ref == "" || !isLocalSharePath(ref) {
 		return nil
+	}
+
+	// Standard markdown image links require characters such as spaces or
+	// non-ASCII to be percent-encoded (e.g. "图片/foo%201.jpg"), but the
+	// canonical path stored in the file table is the literal Obsidian path
+	// (e.g. "图片/foo 1.jpg"). Decode percent-encoding here so the DB lookup
+	// matches regardless of which link form the note used.
+	// 标准 Markdown 图片链接中的空格、非 ASCII 字符等需要百分号编码（如
+	// "图片/foo%201.jpg"），但文件表里存的是 Obsidian 原始字面路径
+	// （如 "图片/foo 1.jpg"）。这里解码百分号编码，让数据库查找在任何
+	// 链接形式下都能命中。
+	if decoded, err := url.PathUnescape(ref); err == nil && decoded != "" {
+		ref = decoded
 	}
 
 	candidates := make([]string, 0, 2)

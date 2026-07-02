@@ -16,6 +16,7 @@ import (
 
 	"github.com/haierkeys/fast-note-sync-service/internal/service"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
+	"github.com/haierkeys/fast-note-sync-service/pkg/fileurl"
 	"github.com/haierkeys/fast-note-sync-service/pkg/workerpool"
 	"github.com/haierkeys/fast-note-sync-service/pkg/writequeue"
 	"golang.org/x/mod/semver"
@@ -40,6 +41,8 @@ type App struct {
 	wg               sync.WaitGroup
 	checkVersionMu   sync.RWMutex
 	checkVersion     pkgapp.CheckVersionInfo
+	serviceReleases  []pkgapp.HistoricalVersion // Cached filtered service releases // 缓存的已过滤服务版本列表
+	pluginReleases   []pkgapp.HistoricalVersion // Cached filtered plugin releases // 缓存的已过滤插件版本列表
 	supportRecordsMu sync.RWMutex
 	supportRecords   map[string][]pkgapp.SupportRecord
 	wss              *pkgapp.WebsocketServer // WebSocket server reference // WebSocket 服务器引用
@@ -93,6 +96,14 @@ func NewApp(cfg *AppConfig, logger *zap.Logger, db *gorm.DB, efs embed.FS) (*App
 // Close releases resources held by application container
 // Close 释放应用容器持有的资源
 func (a *App) Close() error {
+	if a.Dao != nil && a.Dao.BleveMgr != nil {
+		if err := a.Dao.BleveMgr.CloseAll(); err != nil {
+			a.logger.Error("failed to close all Bleve indexes", zap.Error(err))
+		} else {
+			a.logger.Info("All Bleve indexes closed")
+		}
+	}
+
 	if a.DB != nil {
 		sqlDB, err := a.DB.DB()
 		if err != nil {
@@ -153,8 +164,34 @@ func (a *App) CheckVersion(pluginVersion string) pkgapp.CheckVersionInfo {
 
 	cv := a.checkVersion
 
-	// Compare plugin versions
-	// 比较插件版本
+	// Filter service history
+	// 过滤服务端历史版本
+	currentServiceVersion := a.Version().Version
+	if !strings.HasPrefix(currentServiceVersion, "v") {
+		currentServiceVersion = "v" + currentServiceVersion
+	}
+	latestServiceVersion := cv.VersionNewName
+	if !strings.HasPrefix(latestServiceVersion, "v") {
+		latestServiceVersion = "v" + latestServiceVersion
+	}
+
+	if semver.Compare(latestServiceVersion, currentServiceVersion) > 0 {
+		cv.VersionHistory = make([]pkgapp.HistoricalVersion, 0)
+		for i := 1; i < len(a.serviceReleases); i++ {
+			vInfo := a.serviceReleases[i].Version
+			if !strings.HasPrefix(vInfo, "v") {
+				vInfo = "v" + vInfo
+			}
+			if semver.Compare(vInfo, currentServiceVersion) > 0 {
+				hVal := a.serviceReleases[i]
+				hVal.Version = strings.TrimPrefix(hVal.Version, "v")
+				cv.VersionHistory = append(cv.VersionHistory, hVal)
+			}
+		}
+	}
+
+	// Compare plugin versions and filter history
+	// 比较插件版本并过滤历史版本
 	if pluginVersion != "" && cv.PluginVersionNewName != "" {
 		v1 := pluginVersion
 		if !strings.HasPrefix(v1, "v") {
@@ -165,12 +202,29 @@ func (a *App) CheckVersion(pluginVersion string) pkgapp.CheckVersionInfo {
 			v2 = "v" + v2
 		}
 		cv.PluginVersionIsNew = semver.Compare(v2, v1) > 0
+
+		if cv.PluginVersionIsNew {
+			cv.PluginVersionHistory = make([]pkgapp.HistoricalVersion, 0)
+			for i := 1; i < len(a.pluginReleases); i++ {
+				vInfo := a.pluginReleases[i].Version
+				if !strings.HasPrefix(vInfo, "v") {
+					vInfo = "v" + vInfo
+				}
+				if semver.Compare(vInfo, v1) > 0 {
+					hVal := a.pluginReleases[i]
+					hVal.Version = strings.TrimPrefix(hVal.Version, "v")
+					cv.PluginVersionHistory = append(cv.PluginVersionHistory, hVal)
+				}
+			}
+		}
 	}
 
 	// Version number returned to client does not have v prefix
 	// 返回给客户端的版本号不带 v 前缀
 	cv.VersionNewName = strings.TrimPrefix(cv.VersionNewName, "v")
 	cv.PluginVersionNewName = strings.TrimPrefix(cv.PluginVersionNewName, "v")
+	cv.SyncUpChunkNum = a.config.App.SyncUpChunkNum
+	cv.SyncDownChunkNum = a.config.App.SyncDownChunkNum
 	// Returns the link information as-is from setting (already set by task)
 	// 直接返回设置中的链接信息（已由任务设置）
 	return cv
@@ -182,6 +236,15 @@ func (a *App) SetCheckVersionInfo(info pkgapp.CheckVersionInfo) {
 	a.checkVersionMu.Lock()
 	defer a.checkVersionMu.Unlock()
 	a.checkVersion = info
+}
+
+// SetCheckVersionReleases sets all filtered service and plugin releases
+// SetCheckVersionReleases 设置所有过滤后的服务和插件发布版本列表
+func (a *App) SetCheckVersionReleases(serviceReleases, pluginReleases []pkgapp.HistoricalVersion) {
+	a.checkVersionMu.Lock()
+	defer a.checkVersionMu.Unlock()
+	a.serviceReleases = serviceReleases
+	a.pluginReleases = pluginReleases
 }
 
 // SetWSS sets WebSocket server reference and binds sync hooks
@@ -255,6 +318,21 @@ func (a *App) GetTokenService() any {
 // IsPullFromGitHub 返回当前拉取源是否为 GitHub
 func (a *App) IsPullFromGitHub() bool {
 	return a.sourceSelector.IsGitHub()
+}
+
+// SourceSelector returns the underlying SourceSelector, exposing Probe/Snapshot
+// for the version-probe API and webgui latency panel.
+// SourceSelector 返回底层的 SourceSelector，供版本探测接口与前端测速面板使用。
+func (a *App) SourceSelector() *fileurl.SourceSelector {
+	return a.sourceSelector
+}
+
+// SetPullSourceMode updates the runtime source selection mode and invalidates
+// the cached probe snapshot. Called after config hot-reload changes pull-source.
+// SetPullSourceMode 更新运行时的选源模式并使缓存的探测快照失效，
+// 在配置热重载修改 pull-source 后调用。
+func (a *App) SetPullSourceMode(mode string) {
+	a.sourceSelector.SetMode(mode)
 }
 
 // ExecuteWrite executes write operation (serialized through Write Queue)
@@ -528,7 +606,21 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 	var errs []error
 
-	// 0. Shutdown ShareService (sync final statistics)
+	// 0. Close all WebSocket connections and wait for handlers to finish.
+	// This must happen before Worker Pool and Write Queue Manager shutdown
+	// to prevent "write queue is closed" and "worker pool is closed" errors
+	// from zombie WebSocket handlers using closed resources.
+	// 关闭所有 WebSocket 连接并等待处理器完成。
+	// 必须在 Worker Pool 和 Write Queue Manager 关闭之前执行，
+	// 以防止僵尸 WebSocket 处理器使用已关闭的资源导致错误。
+	if a.wss != nil {
+		a.logger.Info("Closing all WebSocket connections...")
+		a.wss.CloseAllConnections()
+		a.wss.WaitAllClosed(10 * time.Second)
+		a.logger.Info("All WebSocket connections closed")
+	}
+
+	// 0.1 Shutdown ShareService (sync final statistics)
 	// 0. 关闭 ShareService（同步最后的统计数据）
 	if a.ShareService != nil {
 		a.logger.Info("Shutting down share service...")
@@ -537,13 +629,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	// 0.1 Shutdown NgrokService
-	if a.NgrokService != nil {
-		a.logger.Info("Shutting down ngrok service...")
-		if err := a.NgrokService.Stop(ctx); err != nil {
-			a.logger.Warn("Ngrok service shutdown error", zap.Error(err))
-		}
-	}
+
 
 	// 0.2 Shutdown CloudflareService
 	if a.CloudflareService != nil {

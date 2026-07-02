@@ -100,15 +100,6 @@ const docTemplate = `{
                     "Config"
                 ],
                 "summary": "Get full admin config",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -154,13 +145,6 @@ const docTemplate = `{
                 ],
                 "summary": "Update admin config",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Config Parameters",
                         "name": "params",
@@ -214,15 +198,6 @@ const docTemplate = `{
                     "Config"
                 ],
                 "summary": "Get Cloudflare config",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -269,13 +244,6 @@ const docTemplate = `{
                 "summary": "Update Cloudflare config",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Config Parameters",
                         "name": "params",
                         "in": "body",
@@ -313,120 +281,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/admin/config/ngrok": {
-            "get": {
-                "security": [
-                    {
-                        "UserAuthToken": []
-                    }
-                ],
-                "description": "Get Ngrok tunnel configuration, requires admin privileges",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Config"
-                ],
-                "summary": "Get Ngrok config",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Success",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/app.Res"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/dto.AdminNgrokConfig"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "403": {
-                        "description": "Insufficient privileges",
-                        "schema": {
-                            "$ref": "#/definitions/app.Res"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "UserAuthToken": []
-                    }
-                ],
-                "description": "Modify Ngrok tunnel configuration, requires admin privileges",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Config"
-                ],
-                "summary": "Update Ngrok config",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Config Parameters",
-                        "name": "params",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/dto.AdminNgrokConfig"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Success",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/app.Res"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/dto.AdminNgrokConfig"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "403": {
-                        "description": "Insufficient privileges",
-                        "schema": {
-                            "$ref": "#/definitions/app.Res"
-                        }
-                    }
-                }
-            }
-        },
         "/api/admin/config/user_database": {
             "get": {
                 "security": [
@@ -442,15 +296,6 @@ const docTemplate = `{
                     "Config"
                 ],
                 "summary": "Get user database config",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -496,13 +341,6 @@ const docTemplate = `{
                 ],
                 "summary": "Update user database config",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Config Parameters",
                         "name": "params",
@@ -560,13 +398,6 @@ const docTemplate = `{
                 ],
                 "summary": "Test user database connection",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Config Parameters",
                         "name": "params",
@@ -720,6 +551,232 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/admin/users/create": {
+            "post": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Create a new user, requires admin privileges",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Config"
+                ],
+                "summary": "Create a new user",
+                "parameters": [
+                    {
+                        "description": "Config Parameters",
+                        "name": "params",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UserCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/app.Res"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.UserDTO"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient privileges",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/users/list": {
+            "get": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Handle request to get all users.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Config"
+                ],
+                "summary": "Get all users",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number // 页码",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size // 每页数量",
+                        "name": "pageSize",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/app.Res"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/app.ListRes"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "list": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/dto.UserDTO"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/users/update": {
+            "post": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Update a user, requires admin privileges",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Config"
+                ],
+                "summary": "Update a user",
+                "parameters": [
+                    {
+                        "description": "Config Parameters",
+                        "name": "params",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UserUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/app.Res"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.UserDTO"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient privileges",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/ws_client/{traceId}": {
+            "delete": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Kick a WebSocket client by TraceID, requires admin privileges",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Kick a WebSocket client",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Trace ID of the client",
+                        "name": "traceId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient privileges",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/ws_clients": {
             "get": {
                 "security": [
@@ -735,15 +792,6 @@ const docTemplate = `{
                     "System"
                 ],
                 "summary": "Get connected WebSocket clients",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -775,6 +823,28 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/auth/logout": {
+            "post": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Handle user logout HTTP request, revoke current auth token.\n处理用户退出登录 HTTP 请求，注销当前认证 Token。",
+                "tags": [
+                    "User"
+                ],
+                "summary": "User logout",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
         "/api/backup/config": {
             "post": {
                 "security": [
@@ -793,13 +863,6 @@ const docTemplate = `{
                 ],
                 "summary": "Update backup configuration",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Backup Parameters",
                         "name": "params",
@@ -864,13 +927,6 @@ const docTemplate = `{
                 "summary": "Delete backup configuration",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "type": "integer",
                         "example": 1,
                         "description": "ID // ID",
@@ -920,15 +976,6 @@ const docTemplate = `{
                     "Backup"
                 ],
                 "summary": "Get backup configurations",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -982,13 +1029,6 @@ const docTemplate = `{
                 "summary": "Trigger a backup manually",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Backup Execute Parameters",
                         "name": "params",
                         "in": "body",
@@ -1041,13 +1081,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get backup history list",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "integer",
                         "example": 1,
@@ -1143,13 +1176,6 @@ const docTemplate = `{
                 "summary": "Get attachment content",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "type": "boolean",
                         "example": false,
                         "description": "Is in recycle bin // 是否在回收站",
@@ -1207,13 +1233,6 @@ const docTemplate = `{
                 ],
                 "summary": "Upload attachment",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "description": "Vault name",
@@ -1288,13 +1307,6 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "example": "Image.png",
                         "description": "File path // 文件路径",
                         "name": "path",
@@ -1356,13 +1368,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get attachment info",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "boolean",
                         "example": false,
@@ -1436,13 +1441,6 @@ const docTemplate = `{
                 "summary": "Clear recycle bin",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Clear Parameters",
                         "name": "params",
                         "in": "body",
@@ -1481,13 +1479,6 @@ const docTemplate = `{
                 ],
                 "summary": "Rename attachment",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Rename Parameters",
                         "name": "params",
@@ -1537,13 +1528,6 @@ const docTemplate = `{
                 "summary": "Restore attachment",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Restore Parameters",
                         "name": "params",
                         "in": "body",
@@ -1591,13 +1575,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get file list",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "boolean",
                         "example": false,
@@ -1702,13 +1679,6 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "example": "Projects/Work",
                         "description": "Folder path // 文件夹路径",
                         "name": "path",
@@ -1770,13 +1740,6 @@ const docTemplate = `{
                 "summary": "Create folder",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Create Parameters",
                         "name": "params",
                         "in": "body",
@@ -1826,13 +1789,6 @@ const docTemplate = `{
                 "summary": "Delete folder",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Delete Parameters",
                         "name": "params",
                         "in": "body",
@@ -1868,13 +1824,6 @@ const docTemplate = `{
                 ],
                 "summary": "List files in folder",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "example": "Projects",
@@ -1979,13 +1928,6 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "example": "Projects",
                         "description": "Folder path // 文件夹路径",
                         "name": "path",
@@ -2087,13 +2029,6 @@ const docTemplate = `{
                 "summary": "Get folder tree",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "type": "integer",
                         "example": 3,
                         "description": "Tree depth // 树深度",
@@ -2147,13 +2082,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get folder list",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "example": "Projects",
@@ -2221,13 +2149,6 @@ const docTemplate = `{
                 "summary": "Update git sync configuration",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Git Sync Parameters",
                         "name": "params",
                         "in": "body",
@@ -2291,13 +2212,6 @@ const docTemplate = `{
                 "summary": "Delete git sync configuration",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Git Sync ID",
                         "name": "params",
                         "in": "body",
@@ -2353,13 +2267,6 @@ const docTemplate = `{
                 ],
                 "summary": "Clean local git workspace",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Clean Parameters",
                         "name": "params",
@@ -2417,13 +2324,6 @@ const docTemplate = `{
                 "summary": "Trigger a manual git sync",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Execute Parameters",
                         "name": "params",
                         "in": "body",
@@ -2475,15 +2375,6 @@ const docTemplate = `{
                     "GitSync"
                 ],
                 "summary": "Get git sync configurations",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -2536,13 +2427,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get git sync histories",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "integer",
                         "name": "configId",
@@ -2627,13 +2511,6 @@ const docTemplate = `{
                 "summary": "Validate git sync parameters",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Validation Parameters",
                         "name": "params",
                         "in": "body",
@@ -2708,13 +2585,6 @@ const docTemplate = `{
                 "summary": "Get note details",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "type": "boolean",
                         "example": false,
                         "description": "Is in recycle bin // 是否在回收站",
@@ -2785,13 +2655,6 @@ const docTemplate = `{
                 "summary": "Create or update note",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Note Content",
                         "name": "params",
                         "in": "body",
@@ -2837,13 +2700,6 @@ const docTemplate = `{
                 ],
                 "summary": "Delete note",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "example": "ReadMe.md",
@@ -2910,13 +2766,6 @@ const docTemplate = `{
                 "summary": "Append content to note",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Append Parameters",
                         "name": "params",
                         "in": "body",
@@ -2964,13 +2813,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get backlinks",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "example": "ReadMe.md",
@@ -3040,13 +2882,6 @@ const docTemplate = `{
                 "summary": "Modify note frontmatter",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Frontmatter Modification Parameters",
                         "name": "params",
                         "in": "body",
@@ -3094,13 +2929,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get note history list",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "boolean",
                         "example": false,
@@ -3198,13 +3026,6 @@ const docTemplate = `{
                 "summary": "Get note history details",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "type": "integer",
                         "format": "int64",
                         "description": "History Record ID",
@@ -3255,13 +3076,6 @@ const docTemplate = `{
                 "summary": "Restore note from history",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Restore Parameters",
                         "name": "params",
                         "in": "body",
@@ -3309,13 +3123,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get outgoing links",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "example": "ReadMe.md",
@@ -3385,13 +3192,6 @@ const docTemplate = `{
                 "summary": "Prepend content to note",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Prepend Parameters",
                         "name": "params",
                         "in": "body",
@@ -3443,13 +3243,6 @@ const docTemplate = `{
                 "summary": "Clear recycle bin",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Clear Parameters",
                         "name": "params",
                         "in": "body",
@@ -3488,13 +3281,6 @@ const docTemplate = `{
                 ],
                 "summary": "Rename note",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Rename Parameters",
                         "name": "params",
@@ -3547,13 +3333,6 @@ const docTemplate = `{
                 "summary": "Find and replace in note",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Find and Replace Parameters",
                         "name": "params",
                         "in": "body",
@@ -3602,13 +3381,6 @@ const docTemplate = `{
                 "summary": "Restore note",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Restore Parameters",
                         "name": "params",
                         "in": "body",
@@ -3656,13 +3428,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get note list",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "boolean",
                         "example": false,
@@ -3784,13 +3549,6 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "description": "Vault name",
                         "name": "vault",
                         "in": "query",
@@ -3838,13 +3596,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get setting info",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "example": "User/Theme",
@@ -3908,13 +3659,6 @@ const docTemplate = `{
                 "summary": "Create or update setting",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Create/Update Parameters",
                         "name": "params",
                         "in": "body",
@@ -3964,13 +3708,6 @@ const docTemplate = `{
                 "summary": "Delete setting",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Delete Parameters",
                         "name": "params",
                         "in": "body",
@@ -4009,13 +3746,6 @@ const docTemplate = `{
                 ],
                 "summary": "Rename setting",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Rename Parameters",
                         "name": "params",
@@ -4064,13 +3794,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get setting list",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "example": "User/",
@@ -4151,13 +3874,6 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "example": "ReadMe.md",
                         "description": "Resource path // 资源路径",
                         "name": "path",
@@ -4221,13 +3937,6 @@ const docTemplate = `{
                 "summary": "Create resource share",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Share Parameters",
                         "name": "params",
                         "in": "body",
@@ -4276,13 +3985,6 @@ const docTemplate = `{
                 ],
                 "summary": "Cancel share",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Cancel Parameters",
                         "name": "params",
@@ -4433,13 +4135,6 @@ const docTemplate = `{
                 "summary": "Update share password",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Update Parameters",
                         "name": "params",
                         "in": "body",
@@ -4478,13 +4173,6 @@ const docTemplate = `{
                 ],
                 "summary": "Create short link for share",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Short Link Parameters",
                         "name": "params",
@@ -4533,13 +4221,6 @@ const docTemplate = `{
                 ],
                 "summary": "List shares",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "string",
                         "description": "Sort field: created_at, updated_at, expires_at (default: created_at)",
@@ -4616,15 +4297,6 @@ const docTemplate = `{
                     "Storage"
                 ],
                 "summary": "Get storage configuration list",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -4666,13 +4338,6 @@ const docTemplate = `{
                 ],
                 "summary": "Create or update storage configuration",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Storage Parameters",
                         "name": "params",
@@ -4718,13 +4383,6 @@ const docTemplate = `{
                 ],
                 "summary": "Delete storage configuration",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "integer",
                         "format": "int64",
@@ -4797,13 +4455,6 @@ const docTemplate = `{
                 ],
                 "summary": "Validate storage connection",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Storage Parameters",
                         "name": "params",
@@ -4924,13 +4575,6 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
                         "example": "modify",
                         "description": "Action type // 操作类型",
                         "name": "action",
@@ -5020,13 +4664,6 @@ const docTemplate = `{
                 "summary": "Change user password",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "description": "Change Password Parameters",
                         "name": "params",
                         "in": "body",
@@ -5076,15 +4713,6 @@ const docTemplate = `{
                     "User"
                 ],
                 "summary": "Get user info",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -5232,15 +4860,6 @@ const docTemplate = `{
                     "Vault"
                 ],
                 "summary": "Get vault list",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "Success",
@@ -5283,13 +4902,6 @@ const docTemplate = `{
                 ],
                 "summary": "Create or update vault",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "description": "Vault Parameters",
                         "name": "params",
@@ -5337,13 +4949,6 @@ const docTemplate = `{
                 "summary": "Delete vault",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
                         "minimum": 1,
                         "type": "integer",
                         "example": 1,
@@ -5351,6 +4956,45 @@ const docTemplate = `{
                         "name": "id",
                         "in": "query",
                         "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/vault/force-delete-item": {
+            "post": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Permanently delete a single note or file (attachment) in a vault",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Vault"
+                ],
+                "summary": "Force delete a single item",
+                "parameters": [
+                    {
+                        "description": "Delete Parameters",
+                        "name": "params",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.VaultForceDeleteItemRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -5379,13 +5023,6 @@ const docTemplate = `{
                 ],
                 "summary": "Get vault details",
                 "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Auth Token",
-                        "name": "token",
-                        "in": "header",
-                        "required": true
-                    },
                     {
                         "type": "integer",
                         "format": "int64",
@@ -5417,6 +5054,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/vault/rebuild-index": {
+            "post": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Rebuild full-text search index from physical database and files for a specific vault, restricted to webgui client",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Vault"
+                ],
+                "summary": "Rebuild vault FTS index",
+                "parameters": [
+                    {
+                        "description": "Rebuild Index Parameters",
+                        "name": "params",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.VaultRebuildIndexRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "$ref": "#/definitions/app.Res"
+                        }
+                    }
+                }
+            }
+        },
         "/api/version": {
             "get": {
                 "description": "Get current server software version, Git tag, and build time",
@@ -5440,6 +5116,43 @@ const docTemplate = `{
                                     "properties": {
                                         "data": {
                                             "$ref": "#/definitions/dto.VersionDTO"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/api/version/probe": {
+            "get": {
+                "security": [
+                    {
+                        "UserAuthToken": []
+                    }
+                ],
+                "description": "Parallel-probe GitHub and CNB release endpoints, return reachability, latency, recommended source and current selected mode",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Probe version sources latency",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/app.Res"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/dto.SourceProbeDTO"
                                         }
                                     }
                                 }
@@ -5500,6 +5213,19 @@ const docTemplate = `{
                 },
                 "version": {
                     "description": "Service version number // 服务版本号",
+                    "type": "string"
+                }
+            }
+        },
+        "app.HistoricalVersion": {
+            "type": "object",
+            "properties": {
+                "changelogContent": {
+                    "description": "Changelog content // 更新日志内容",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version name // 版本号",
                     "type": "string"
                 }
             }
@@ -5580,6 +5306,9 @@ const docTemplate = `{
                 "startTime": {
                     "type": "string"
                 },
+                "tokenId": {
+                    "type": "integer"
+                },
                 "traceId": {
                     "type": "string"
                 },
@@ -5587,31 +5316,6 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
-        },
-        "diffmatchpatch.Diff": {
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string"
-                },
-                "type": {
-                    "$ref": "#/definitions/diffmatchpatch.Operation"
-                }
-            }
-        },
-        "diffmatchpatch.Operation": {
-            "type": "integer",
-            "format": "int32",
-            "enum": [
-                -1,
-                1,
-                0
-            ],
-            "x-enum-varnames": [
-                "DiffDelete",
-                "DiffInsert",
-                "DiffEqual"
-            ]
         },
         "dto.AdminCPUInfo": {
             "type": "object",
@@ -5682,8 +5386,27 @@ const docTemplate = `{
                     "description": "Auth token key // 认证 Token 密钥",
                     "type": "string"
                 },
+                "customResponseHeaders": {
+                    "description": "Custom HTTP response headers // 自定义 HTTP 响应头",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "defaultApiFolder": {
                     "description": "Default API folder // 默认 API 目录",
+                    "type": "string"
+                },
+                "defaultContextTimeout": {
+                    "description": "Default context timeout // 默认上下文超时",
+                    "type": "integer"
+                },
+                "defaultPageSize": {
+                    "description": "Default page size // 默认每页显示数",
+                    "type": "integer"
+                },
+                "downloadSessionTimeout": {
+                    "description": "Download session timeout // 下载分片超时",
                     "type": "string"
                 },
                 "fileChunkSize": {
@@ -5694,12 +5417,40 @@ const docTemplate = `{
                     "description": "Font set // 字体设置",
                     "type": "string"
                 },
+                "ftsBleveEnabled": {
+                    "description": "Whether Bleve FTS is enabled // 是否启用 Bleve 全文搜索",
+                    "type": "boolean"
+                },
+                "ftsBleveStoreRaw": {
+                    "description": "Whether Bleve stores raw content // Bleve 全文搜索是否存储原始文本",
+                    "type": "boolean"
+                },
+                "gitEmail": {
+                    "description": "Git author email // Git 提交的作者邮箱",
+                    "type": "string"
+                },
+                "gitName": {
+                    "description": "Git author name // Git 提交的作者名称",
+                    "type": "string"
+                },
                 "historyKeepVersions": {
                     "description": "History versions to keep // 历史版本保留数",
                     "type": "integer"
                 },
                 "historySaveDelay": {
                     "description": "History save delay // 历史保存延迟",
+                    "type": "string"
+                },
+                "isReturnSussess": {
+                    "description": "Whether to return success detail // 是否返回成功详情",
+                    "type": "boolean"
+                },
+                "maxPageSize": {
+                    "description": "Max page size // 最大每页显示限制",
+                    "type": "integer"
+                },
+                "pullReleaseChannel": {
+                    "description": "Update version channel: stable | beta // 更新版本通道：stable | beta",
                     "type": "string"
                 },
                 "pullSource": {
@@ -5722,12 +5473,80 @@ const docTemplate = `{
                     "description": "Soft delete retention time // 软删除保留时间",
                     "type": "string"
                 },
+                "syncLogRetentionTime": {
+                    "description": "Sync log retention time // 同步日志保留时长",
+                    "type": "string"
+                },
+                "tempPath": {
+                    "description": "Temporary file path // 临时文件路径",
+                    "type": "string"
+                },
                 "tokenExpiry": {
                     "description": "Token expiry // Token 有效期",
                     "type": "string"
                 },
                 "uploadSessionTimeout": {
                     "description": "Upload session timeout // 上传会话超时时间",
+                    "type": "string"
+                },
+                "webguiLoginTokenBindIp": {
+                    "description": "WebGUI login token bind IP // WebGUI 登录 Token 是否绑定 IP",
+                    "type": "boolean"
+                },
+                "webguiLoginTokenExpiry": {
+                    "description": "WebGUI login token expiry // WebGUI 登录 Token 有效期",
+                    "type": "string"
+                },
+                "workerPoolMaxWorkers": {
+                    "description": "Worker pool max workers // 协程池最大协程数",
+                    "type": "integer"
+                },
+                "workerPoolQueueSize": {
+                    "description": "Worker pool queue size // 协程池队列大小",
+                    "type": "integer"
+                },
+                "writeQueueCapacity": {
+                    "description": "Write queue capacity // 写入队列容量",
+                    "type": "integer"
+                },
+                "writeQueueIdleTime": {
+                    "description": "Write queue idle cleanup time // 写入队列空闲清理时长",
+                    "type": "string"
+                },
+                "writeQueueTimeout": {
+                    "description": "Write queue timeout // 写入队列超时",
+                    "type": "string"
+                },
+                "wsCheckUtf8Enabled": {
+                    "description": "Whether ws check UTF-8 is enabled // WebSocket 是否开启 UTF-8 校验",
+                    "type": "boolean"
+                },
+                "wsCompressionEnabled": {
+                    "description": "Whether ws compression is enabled // WebSocket 是否开启压缩",
+                    "type": "boolean"
+                },
+                "wsCompressionLevel": {
+                    "description": "Ws compression level // WebSocket 压缩级别",
+                    "type": "integer"
+                },
+                "wsCompressionThreshold": {
+                    "description": "Ws compression threshold // WebSocket 压缩阈值",
+                    "type": "integer"
+                },
+                "wsParallelEnabled": {
+                    "description": "Whether ws parallel is enabled // WebSocket 并行处理是否开启",
+                    "type": "boolean"
+                },
+                "wsParallelGolimit": {
+                    "description": "Ws parallel goroutine limit // WebSocket 并行协程限制",
+                    "type": "integer"
+                },
+                "wsReadMaxPayloadSize": {
+                    "description": "WebSocket max read payload // WebSocket 最大读取负载",
+                    "type": "string"
+                },
+                "wsWriteMaxPayloadSize": {
+                    "description": "WebSocket max write payload // WebSocket 最大写入负载",
                     "type": "string"
                 }
             }
@@ -5824,23 +5643,6 @@ const docTemplate = `{
                 "usedPercent": {
                     "description": "Memory usage percentage // 内存使用率",
                     "type": "number"
-                }
-            }
-        },
-        "dto.AdminNgrokConfig": {
-            "type": "object",
-            "properties": {
-                "authToken": {
-                    "description": "ngrok auth token // ngrok 认证令牌",
-                    "type": "string"
-                },
-                "domain": {
-                    "description": "Custom domain // 自定义域名",
-                    "type": "string"
-                },
-                "enabled": {
-                    "description": "Whether to enable ngrok tunnel // 是否启用 ngrok 隧道",
-                    "type": "boolean"
                 }
             }
         },
@@ -6068,13 +5870,13 @@ const docTemplate = `{
         "dto.AdminWebGUIConfig": {
             "type": "object",
             "properties": {
-                "adminUid": {
-                    "description": "Admin UID // 管理员 UID",
-                    "type": "integer"
-                },
                 "fontSet": {
                     "description": "Font set // 字体设置",
                     "type": "string"
+                },
+                "ftsBleveEnabled": {
+                    "description": "Whether Bleve FTS is enabled // 是否启用 Bleve 全文搜索",
+                    "type": "boolean"
                 },
                 "registerIsEnable": {
                     "description": "Registration enablement // 是否开启注册",
@@ -6123,6 +5925,14 @@ const docTemplate = `{
                 },
                 "nextRunTime": {
                     "description": "Next run time // 下次运行时间",
+                    "type": "string"
+                },
+                "passwordMode": {
+                    "description": "Password mode (0:None, 1:Fixed, 2:Random) // 密码模式 (0:无密码, 1:固定密码, 2:随机密码)",
+                    "type": "integer"
+                },
+                "passwordValue": {
+                    "description": "Password value for fixed mode // 固定密码值",
                     "type": "string"
                 },
                 "retentionDays": {
@@ -6189,6 +5999,16 @@ const docTemplate = `{
                     "description": "Is enabled // 是否启用",
                     "type": "boolean",
                     "example": true
+                },
+                "passwordMode": {
+                    "description": "Password mode (0:None, 1:Fixed, 2:Random) // 密码模式 (0:无密码, 1:固定密码, 2:随机密码)",
+                    "type": "integer",
+                    "example": 0
+                },
+                "passwordValue": {
+                    "description": "Password value for fixed mode // 固定密码值",
+                    "type": "string",
+                    "example": "123456"
                 },
                 "retentionDays": {
                     "description": "Retention days // 保留天数",
@@ -6263,6 +6083,10 @@ const docTemplate = `{
                     "description": "Result message // 结果消息",
                     "type": "string"
                 },
+                "password": {
+                    "description": "Password // 密码",
+                    "type": "string"
+                },
                 "startTime": {
                     "description": "Start time // 开始时间",
                     "type": "string"
@@ -6302,6 +6126,10 @@ const docTemplate = `{
                 },
                 "ctime": {
                     "description": "Creation timestamp // 创建时间戳",
+                    "type": "integer"
+                },
+                "id": {
+                    "description": "File ID // 文件 ID",
                     "type": "integer"
                 },
                 "lastTime": {
@@ -6560,6 +6388,13 @@ const docTemplate = `{
                     "description": "Branch // 分支",
                     "type": "string"
                 },
+                "configSyncRules": {
+                    "description": "Config sync rules // 配置同步规则",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "createdAt": {
                     "description": "Created at // 创建时间",
                     "type": "string"
@@ -6571,6 +6406,10 @@ const docTemplate = `{
                 "id": {
                     "description": "Task ID // 任务ID",
                     "type": "integer"
+                },
+                "includeConfig": {
+                    "description": "Include config sync // 是否开启配置同步",
+                    "type": "boolean"
                 },
                 "isEnabled": {
                     "description": "Is enabled // 是否启用",
@@ -6627,12 +6466,21 @@ const docTemplate = `{
                 "branch": {
                     "type": "string"
                 },
+                "configSyncRules": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "delay": {
                     "description": "Delay time (seconds) // 延迟时间（秒）",
                     "type": "integer"
                 },
                 "id": {
                     "type": "integer"
+                },
+                "includeConfig": {
+                    "type": "boolean"
                 },
                 "isEnabled": {
                     "type": "boolean"
@@ -6785,6 +6633,10 @@ const docTemplate = `{
                     "description": "Creation timestamp // 创建时间戳",
                     "type": "integer"
                 },
+                "id": {
+                    "description": "Note ID // 笔记 ID",
+                    "type": "integer"
+                },
                 "lastTime": {
                     "description": "Record update timestamp // 记录更新时间戳",
                     "type": "integer"
@@ -6846,7 +6698,7 @@ const docTemplate = `{
                     "description": "Text differences // 文本差异内容",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/diffmatchpatch.Diff"
+                        "type": "object"
                     }
                 },
                 "id": {
@@ -6991,6 +6843,10 @@ const docTemplate = `{
                 },
                 "ctime": {
                     "description": "Creation timestamp // 创建时间戳",
+                    "type": "integer"
+                },
+                "id": {
+                    "description": "Note ID // 笔记 ID",
                     "type": "integer"
                 },
                 "lastTime": {
@@ -7505,6 +7361,10 @@ const docTemplate = `{
         "dto.ShareCreateResponse": {
             "type": "object",
             "properties": {
+                "baseUrl": {
+                    "description": "Base URL for sharing // 分享基础 URL",
+                    "type": "string"
+                },
                 "expiresAt": {
                     "description": "Expiration time // 过期时间",
                     "type": "string"
@@ -7534,6 +7394,10 @@ const docTemplate = `{
         "dto.ShareListItem": {
             "type": "object",
             "properties": {
+                "baseUrl": {
+                    "description": "Base URL for sharing // 分享基础 URL",
+                    "type": "string"
+                },
                 "createdAt": {
                     "description": "Created at // 创建时间",
                     "type": "string"
@@ -7664,6 +7528,54 @@ const docTemplate = `{
                     "description": "Vault name // 库名",
                     "type": "string",
                     "example": "work"
+                }
+            }
+        },
+        "dto.SourceProbeDTO": {
+            "description": "Probe result containing GitHub/CNB reachability, latency, recommended source and current mode",
+            "type": "object",
+            "properties": {
+                "cnb": {
+                    "description": "CNB probe result // CNB 探测结果",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/dto.SourceProbeItem"
+                        }
+                    ]
+                },
+                "github": {
+                    "description": "GitHub probe result // GitHub 探测结果",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/dto.SourceProbeItem"
+                        }
+                    ]
+                },
+                "recommended": {
+                    "description": "Recommended source: \"github\" or \"cnb\" // 推荐源",
+                    "type": "string",
+                    "example": "github"
+                },
+                "selectedMode": {
+                    "description": "Current configured pull-source mode // 当前配置的选源模式",
+                    "type": "string",
+                    "example": "auto"
+                }
+            }
+        },
+        "dto.SourceProbeItem": {
+            "description": "Single source probe result: reachability and latency",
+            "type": "object",
+            "properties": {
+                "latencyMs": {
+                    "description": "Round-trip latency in ms // 往返延迟（毫秒）",
+                    "type": "integer",
+                    "example": 280
+                },
+                "ok": {
+                    "description": "Whether the source is reachable // 该源是否可达",
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -7937,9 +7849,17 @@ const docTemplate = `{
                     "description": "Email address // 邮件地址",
                     "type": "string"
                 },
+                "isDeleted": {
+                    "description": "User is blocked",
+                    "type": "boolean"
+                },
                 "token": {
                     "description": "Authentication Token // 认证 Token",
                     "type": "string"
+                },
+                "tokenId": {
+                    "description": "Authentication Token ID // 认证 Token ID",
+                    "type": "integer"
                 },
                 "uid": {
                     "description": "User ID (primary key) // 用户唯一标识（主键）",
@@ -7971,6 +7891,46 @@ const docTemplate = `{
                     "description": "Password // 密码",
                     "type": "string",
                     "example": "password123"
+                },
+                "tokenId": {
+                    "description": "Last token ID for rotation // 最后一个用于轮转的令牌ID",
+                    "type": "integer",
+                    "example": 123
+                }
+            }
+        },
+        "dto.UserUpdateRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "uid",
+                "username"
+            ],
+            "properties": {
+                "email": {
+                    "description": "User email // 用户邮件",
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "isDeleted": {
+                    "description": "User deleted flag",
+                    "type": "boolean",
+                    "example": true
+                },
+                "password": {
+                    "description": "User password // 用户密码",
+                    "type": "string",
+                    "example": "password123"
+                },
+                "uid": {
+                    "description": "User ID (primary key) // 用户唯一标识（主键）",
+                    "type": "integer",
+                    "example": 123
+                },
+                "username": {
+                    "description": "User name // 用户名",
+                    "type": "string",
+                    "example": "username123"
                 }
             }
         },
@@ -8015,6 +7975,30 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.VaultForceDeleteItemRequest": {
+            "type": "object",
+            "required": [
+                "id",
+                "type",
+                "vaultId"
+            ],
+            "properties": {
+                "id": {
+                    "description": "Resource ID // 资源 ID",
+                    "type": "integer",
+                    "example": 100
+                },
+                "type": {
+                    "description": "Resource type: note or file // 资源类型",
+                    "type": "string"
+                },
+                "vaultId": {
+                    "description": "Vault ID // 笔记库 ID",
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
         "dto.VaultPostRequest": {
             "type": "object",
             "required": [
@@ -8033,6 +8017,20 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.VaultRebuildIndexRequest": {
+            "type": "object",
+            "required": [
+                "id"
+            ],
+            "properties": {
+                "id": {
+                    "description": "Vault ID // 保险库 ID",
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 1
+                }
+            }
+        },
         "dto.VersionDTO": {
             "type": "object",
             "properties": {
@@ -8043,6 +8041,13 @@ const docTemplate = `{
                 "gitTag": {
                     "description": "Git tag // Git 标签",
                     "type": "string"
+                },
+                "pluginVersionHistory": {
+                    "description": "Plugin version history // 插件历史版本",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/app.HistoricalVersion"
+                    }
                 },
                 "pluginVersionNewChangelog": {
                     "description": "New plugin version changelog link // 插件新版本更新日志链接",
@@ -8063,6 +8068,13 @@ const docTemplate = `{
                 "version": {
                     "description": "Current version // 当前版本",
                     "type": "string"
+                },
+                "versionHistory": {
+                    "description": "Service version history // 服务端历史版本",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/app.HistoricalVersion"
+                    }
                 },
                 "versionIsNew": {
                     "description": "Is there a new version // 是否有新版本",

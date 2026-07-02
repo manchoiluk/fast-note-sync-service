@@ -216,36 +216,7 @@ Schema: `app.Res`
 
 ---
 
-### Get Ngrok config
-**Endpoint**: `GET /api/admin/config/ngrok`
 
-Get Ngrok tunnel configuration, requires admin privileges
-
-**Parameters**:
-| Name | In | Type | Required | Description |
-|------|----|------|----------|-------------|
-| token | header | string | ✓ | Auth Token |
-
-**Success Response (200)**:
-Schema: `app.Res`
-
----
-
-### Update Ngrok config
-**Endpoint**: `POST /api/admin/config/ngrok`
-
-Modify Ngrok tunnel configuration, requires admin privileges
-
-**Parameters**:
-| Name | In | Type | Required | Description |
-|------|----|------|----------|-------------|
-| token | header | string | ✓ | Auth Token |
-| params | body | api_router.ngrokConfig | ✓ | Config Parameters |
-
-**Success Response (200)**:
-Schema: `app.Res`
-
----
 
 ### Get WebGUI basic config
 **Endpoint**: `GET /api/webgui/config`
@@ -1306,6 +1277,34 @@ None
 
 **Success Response (200)**:
 Schema: `app.Res`
+
+---
+
+### Probe version source latency
+**Endpoint**: `GET /api/version/probe`
+
+Parallel-probe GitHub and CNB release endpoints, return reachability, latency, recommended source and current selected mode
+
+**Parameters**:
+| Name | In | Type | Required | Description |
+|------|----|------|----------|-------------|
+| token | header | string | ✓ | Auth Token |
+
+**Success Response (200)**:
+Schema: `app.Res{data=dto.SourceProbeDTO}`
+
+```json
+{
+  "code": 1,
+  "msg": "Success",
+  "data": {
+    "github": { "ok": true, "latencyMs": 280 },
+    "cnb": { "ok": true, "latencyMs": 52 },
+    "recommended": "cnb",
+    "selectedMode": "auto"
+  }
+}
+```
 
 ---
 

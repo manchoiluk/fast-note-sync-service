@@ -15,6 +15,15 @@ definitions:
         description: Service version number // 服务版本号
         type: string
     type: object
+  app.HistoricalVersion:
+    properties:
+      changelogContent:
+        description: Changelog content // 更新日志内容
+        type: string
+      version:
+        description: Version name // 版本号
+        type: string
+    type: object
   app.ListRes:
     properties:
       list:
@@ -66,29 +75,13 @@ definitions:
         type: string
       startTime:
         type: string
+      tokenId:
+        type: integer
       traceId:
         type: string
       uid:
         type: string
     type: object
-  diffmatchpatch.Diff:
-    properties:
-      text:
-        type: string
-      type:
-        $ref: '#/definitions/diffmatchpatch.Operation'
-    type: object
-  diffmatchpatch.Operation:
-    enum:
-    - -1
-    - 1
-    - 0
-    format: int32
-    type: integer
-    x-enum-varnames:
-    - DiffDelete
-    - DiffInsert
-    - DiffEqual
   dto.AdminCPUInfo:
     properties:
       loadAvg:
@@ -137,8 +130,22 @@ definitions:
       authTokenKey:
         description: Auth token key // 认证 Token 密钥
         type: string
+      customResponseHeaders:
+        additionalProperties:
+          type: string
+        description: Custom HTTP response headers // 自定义 HTTP 响应头
+        type: object
       defaultApiFolder:
         description: Default API folder // 默认 API 目录
+        type: string
+      defaultContextTimeout:
+        description: Default context timeout // 默认上下文超时
+        type: integer
+      defaultPageSize:
+        description: Default page size // 默认每页显示数
+        type: integer
+      downloadSessionTimeout:
+        description: Download session timeout // 下载分片超时
         type: string
       fileChunkSize:
         description: File chunk size // 文件分块大小
@@ -146,11 +153,32 @@ definitions:
       fontSet:
         description: Font set // 字体设置
         type: string
+      ftsBleveEnabled:
+        description: Whether Bleve FTS is enabled // 是否启用 Bleve 全文搜索
+        type: boolean
+      ftsBleveStoreRaw:
+        description: Whether Bleve stores raw content // Bleve 全文搜索是否存储原始文本
+        type: boolean
+      gitEmail:
+        description: Git author email // Git 提交的作者邮箱
+        type: string
+      gitName:
+        description: Git author name // Git 提交的作者名称
+        type: string
       historyKeepVersions:
         description: History versions to keep // 历史版本保留数
         type: integer
       historySaveDelay:
         description: History save delay // 历史保存延迟
+        type: string
+      isReturnSussess:
+        description: Whether to return success detail // 是否返回成功详情
+        type: boolean
+      maxPageSize:
+        description: Max page size // 最大每页显示限制
+        type: integer
+      pullReleaseChannel:
+        description: 'Update version channel: stable | beta // 更新版本通道：stable | beta'
         type: string
       pullSource:
         description: 'Data pull source: auto | github | cnb // 数据拉取源：auto | github
@@ -168,11 +196,62 @@ definitions:
       softDeleteRetentionTime:
         description: Soft delete retention time // 软删除保留时间
         type: string
+      syncLogRetentionTime:
+        description: Sync log retention time // 同步日志保留时长
+        type: string
+      tempPath:
+        description: Temporary file path // 临时文件路径
+        type: string
       tokenExpiry:
         description: Token expiry // Token 有效期
         type: string
       uploadSessionTimeout:
         description: Upload session timeout // 上传会话超时时间
+        type: string
+      webguiLoginTokenBindIp:
+        description: WebGUI login token bind IP // WebGUI 登录 Token 是否绑定 IP
+        type: boolean
+      webguiLoginTokenExpiry:
+        description: WebGUI login token expiry // WebGUI 登录 Token 有效期
+        type: string
+      workerPoolMaxWorkers:
+        description: Worker pool max workers // 协程池最大协程数
+        type: integer
+      workerPoolQueueSize:
+        description: Worker pool queue size // 协程池队列大小
+        type: integer
+      writeQueueCapacity:
+        description: Write queue capacity // 写入队列容量
+        type: integer
+      writeQueueIdleTime:
+        description: Write queue idle cleanup time // 写入队列空闲清理时长
+        type: string
+      writeQueueTimeout:
+        description: Write queue timeout // 写入队列超时
+        type: string
+      wsCheckUtf8Enabled:
+        description: Whether ws check UTF-8 is enabled // WebSocket 是否开启 UTF-8 校验
+        type: boolean
+      wsCompressionEnabled:
+        description: Whether ws compression is enabled // WebSocket 是否开启压缩
+        type: boolean
+      wsCompressionLevel:
+        description: Ws compression level // WebSocket 压缩级别
+        type: integer
+      wsCompressionThreshold:
+        description: Ws compression threshold // WebSocket 压缩阈值
+        type: integer
+      wsParallelEnabled:
+        description: Whether ws parallel is enabled // WebSocket 并行处理是否开启
+        type: boolean
+      wsParallelGolimit:
+        description: Ws parallel goroutine limit // WebSocket 并行协程限制
+        type: integer
+      wsReadMaxPayloadSize:
+        description: WebSocket max read payload // WebSocket 最大读取负载
+        type: string
+      wsWriteMaxPayloadSize:
+        description: WebSocket max write payload // WebSocket 最大写入负载
         type: string
     type: object
   dto.AdminHostInfo:
@@ -243,18 +322,6 @@ definitions:
       usedPercent:
         description: Memory usage percentage // 内存使用率
         type: number
-    type: object
-  dto.AdminNgrokConfig:
-    properties:
-      authToken:
-        description: ngrok auth token // ngrok 认证令牌
-        type: string
-      domain:
-        description: Custom domain // 自定义域名
-        type: string
-      enabled:
-        description: Whether to enable ngrok tunnel // 是否启用 ngrok 隧道
-        type: boolean
     type: object
   dto.AdminProcessInfo:
     properties:
@@ -413,12 +480,12 @@ definitions:
     type: object
   dto.AdminWebGUIConfig:
     properties:
-      adminUid:
-        description: Admin UID // 管理员 UID
-        type: integer
       fontSet:
         description: Font set // 字体设置
         type: string
+      ftsBleveEnabled:
+        description: Whether Bleve FTS is enabled // 是否启用 Bleve 全文搜索
+        type: boolean
       registerIsEnable:
         description: Registration enablement // 是否开启注册
         type: boolean
@@ -455,6 +522,13 @@ definitions:
         type: integer
       nextRunTime:
         description: Next run time // 下次运行时间
+        type: string
+      passwordMode:
+        description: Password mode (0:None, 1:Fixed, 2:Random) // 密码模式 (0:无密码, 1:固定密码,
+          2:随机密码)
+        type: integer
+      passwordValue:
+        description: Password value for fixed mode // 固定密码值
         type: string
       retentionDays:
         description: Retention days // 保留天数
@@ -503,6 +577,15 @@ definitions:
         description: Is enabled // 是否启用
         example: true
         type: boolean
+      passwordMode:
+        description: Password mode (0:None, 1:Fixed, 2:Random) // 密码模式 (0:无密码, 1:固定密码,
+          2:随机密码)
+        example: 0
+        type: integer
+      passwordValue:
+        description: Password value for fixed mode // 固定密码值
+        example: "123456"
+        type: string
       retentionDays:
         description: Retention days // 保留天数
         example: 7
@@ -562,6 +645,9 @@ definitions:
       message:
         description: Result message // 结果消息
         type: string
+      password:
+        description: Password // 密码
+        type: string
       startTime:
         description: Start time // 开始时间
         type: string
@@ -592,6 +678,9 @@ definitions:
         type: string
       ctime:
         description: Creation timestamp // 创建时间戳
+        type: integer
+      id:
+        description: File ID // 文件 ID
         type: integer
       lastTime:
         description: Updated timestamp // 更新时间戳
@@ -781,6 +870,11 @@ definitions:
       branch:
         description: Branch // 分支
         type: string
+      configSyncRules:
+        description: Config sync rules // 配置同步规则
+        items:
+          type: string
+        type: array
       createdAt:
         description: Created at // 创建时间
         type: string
@@ -790,6 +884,9 @@ definitions:
       id:
         description: Task ID // 任务ID
         type: integer
+      includeConfig:
+        description: Include config sync // 是否开启配置同步
+        type: boolean
       isEnabled:
         description: Is enabled // 是否启用
         type: boolean
@@ -829,11 +926,17 @@ definitions:
     properties:
       branch:
         type: string
+      configSyncRules:
+        items:
+          type: string
+        type: array
       delay:
         description: Delay time (seconds) // 延迟时间（秒）
         type: integer
       id:
         type: integer
+      includeConfig:
+        type: boolean
       isEnabled:
         type: boolean
       password:
@@ -941,6 +1044,9 @@ definitions:
       ctime:
         description: Creation timestamp // 创建时间戳
         type: integer
+      id:
+        description: Note ID // 笔记 ID
+        type: integer
       lastTime:
         description: Record update timestamp // 记录更新时间戳
         type: integer
@@ -986,7 +1092,7 @@ definitions:
       diffs:
         description: Text differences // 文本差异内容
         items:
-          $ref: '#/definitions/diffmatchpatch.Diff'
+          type: object
         type: array
       id:
         description: History entry ID // 历史项 ID
@@ -1095,6 +1201,9 @@ definitions:
         type: string
       ctime:
         description: Creation timestamp // 创建时间戳
+        type: integer
+      id:
+        description: Note ID // 笔记 ID
         type: integer
       lastTime:
         description: Record update timestamp // 记录更新时间戳
@@ -1479,6 +1588,9 @@ definitions:
     type: object
   dto.ShareCreateResponse:
     properties:
+      baseUrl:
+        description: Base URL for sharing // 分享基础 URL
+        type: string
       expiresAt:
         description: Expiration time // 过期时间
         type: string
@@ -1501,6 +1613,9 @@ definitions:
     type: object
   dto.ShareListItem:
     properties:
+      baseUrl:
+        description: Base URL for sharing // 分享基础 URL
+        type: string
       createdAt:
         description: Created at // 创建时间
         type: string
@@ -1601,6 +1716,39 @@ definitions:
     - path
     - pathHash
     - vault
+    type: object
+  dto.SourceProbeDTO:
+    description: Probe result containing GitHub/CNB reachability, latency, recommended
+      source and current mode
+    properties:
+      cnb:
+        allOf:
+        - $ref: '#/definitions/dto.SourceProbeItem'
+        description: CNB probe result // CNB 探测结果
+      github:
+        allOf:
+        - $ref: '#/definitions/dto.SourceProbeItem'
+        description: GitHub probe result // GitHub 探测结果
+      recommended:
+        description: 'Recommended source: "github" or "cnb" // 推荐源'
+        example: github
+        type: string
+      selectedMode:
+        description: Current configured pull-source mode // 当前配置的选源模式
+        example: auto
+        type: string
+    type: object
+  dto.SourceProbeItem:
+    description: 'Single source probe result: reachability and latency'
+    properties:
+      latencyMs:
+        description: Round-trip latency in ms // 往返延迟（毫秒）
+        example: 280
+        type: integer
+      ok:
+        description: Whether the source is reachable // 该源是否可达
+        example: true
+        type: boolean
     type: object
   dto.StorageDTO:
     properties:
@@ -1807,9 +1955,15 @@ definitions:
       email:
         description: Email address // 邮件地址
         type: string
+      isDeleted:
+        description: User is blocked
+        type: boolean
       token:
         description: Authentication Token // 认证 Token
         type: string
+      tokenId:
+        description: Authentication Token ID // 认证 Token ID
+        type: integer
       uid:
         description: User ID (primary key) // 用户唯一标识（主键）
         type: integer
@@ -1830,9 +1984,40 @@ definitions:
         description: Password // 密码
         example: password123
         type: string
+      tokenId:
+        description: Last token ID for rotation // 最后一个用于轮转的令牌ID
+        example: 123
+        type: integer
     required:
     - credentials
     - password
+    type: object
+  dto.UserUpdateRequest:
+    properties:
+      email:
+        description: User email // 用户邮件
+        example: user@example.com
+        type: string
+      isDeleted:
+        description: User deleted flag
+        example: true
+        type: boolean
+      password:
+        description: User password // 用户密码
+        example: password123
+        type: string
+      uid:
+        description: User ID (primary key) // 用户唯一标识（主键）
+        example: 123
+        type: integer
+      username:
+        description: User name // 用户名
+        example: username123
+        type: string
+    required:
+    - email
+    - uid
+    - username
     type: object
   dto.VaultDTO:
     properties:
@@ -1864,6 +2049,24 @@ definitions:
         description: Vault name // 保险库名称
         type: string
     type: object
+  dto.VaultForceDeleteItemRequest:
+    properties:
+      id:
+        description: Resource ID // 资源 ID
+        example: 100
+        type: integer
+      type:
+        description: 'Resource type: note or file // 资源类型'
+        type: string
+      vaultId:
+        description: Vault ID // 笔记库 ID
+        example: 1
+        type: integer
+    required:
+    - id
+    - type
+    - vaultId
+    type: object
   dto.VaultPostRequest:
     properties:
       id:
@@ -1877,6 +2080,16 @@ definitions:
     required:
     - vault
     type: object
+  dto.VaultRebuildIndexRequest:
+    properties:
+      id:
+        description: Vault ID // 保险库 ID
+        example: 1
+        minimum: 1
+        type: integer
+    required:
+    - id
+    type: object
   dto.VersionDTO:
     properties:
       buildTime:
@@ -1885,6 +2098,11 @@ definitions:
       gitTag:
         description: Git tag // Git 标签
         type: string
+      pluginVersionHistory:
+        description: Plugin version history // 插件历史版本
+        items:
+          $ref: '#/definitions/app.HistoricalVersion'
+        type: array
       pluginVersionNewChangelog:
         description: New plugin version changelog link // 插件新版本更新日志链接
         type: string
@@ -1900,6 +2118,11 @@ definitions:
       version:
         description: Current version // 当前版本
         type: string
+      versionHistory:
+        description: Service version history // 服务端历史版本
+        items:
+          $ref: '#/definitions/app.HistoricalVersion'
+        type: array
       versionIsNew:
         description: Is there a new version // 是否有新版本
         type: boolean
@@ -1967,12 +2190,6 @@ paths:
   /api/admin/config:
     get:
       description: Get full system configuration information, requires admin privileges
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -1999,11 +2216,6 @@ paths:
       - application/json
       description: Modify full system configuration information, requires admin privileges
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Config Parameters
         in: body
         name: params
@@ -2034,12 +2246,6 @@ paths:
   /api/admin/config/cloudflare:
     get:
       description: Get Cloudflare tunnel configuration, requires admin privileges
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -2066,11 +2272,6 @@ paths:
       - application/json
       description: Modify Cloudflare tunnel configuration, requires admin privileges
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Config Parameters
         in: body
         name: params
@@ -2098,82 +2299,9 @@ paths:
       summary: Update Cloudflare config
       tags:
       - Config
-  /api/admin/config/ngrok:
-    get:
-      description: Get Ngrok tunnel configuration, requires admin privileges
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Success
-          schema:
-            allOf:
-            - $ref: '#/definitions/app.Res'
-            - properties:
-                data:
-                  $ref: '#/definitions/dto.AdminNgrokConfig'
-              type: object
-        "403":
-          description: Insufficient privileges
-          schema:
-            $ref: '#/definitions/app.Res'
-      security:
-      - UserAuthToken: []
-      summary: Get Ngrok config
-      tags:
-      - Config
-    post:
-      consumes:
-      - application/json
-      description: Modify Ngrok tunnel configuration, requires admin privileges
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
-      - description: Config Parameters
-        in: body
-        name: params
-        required: true
-        schema:
-          $ref: '#/definitions/dto.AdminNgrokConfig'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Success
-          schema:
-            allOf:
-            - $ref: '#/definitions/app.Res'
-            - properties:
-                data:
-                  $ref: '#/definitions/dto.AdminNgrokConfig'
-              type: object
-        "403":
-          description: Insufficient privileges
-          schema:
-            $ref: '#/definitions/app.Res'
-      security:
-      - UserAuthToken: []
-      summary: Update Ngrok config
-      tags:
-      - Config
   /api/admin/config/user_database:
     get:
       description: Get user database configuration information, requires admin privileges
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -2201,11 +2329,6 @@ paths:
       description: Modify user database configuration information, requires admin
         privileges
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Config Parameters
         in: body
         name: params
@@ -2240,11 +2363,6 @@ paths:
       description: Test if the provided database configuration can connect successfully,
         requires admin privileges
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Config Parameters
         in: body
         name: params
@@ -2344,16 +2462,141 @@ paths:
       summary: Trigger server upgrade
       tags:
       - System
+  /api/admin/users/create:
+    post:
+      consumes:
+      - application/json
+      description: Create a new user, requires admin privileges
+      parameters:
+      - description: Config Parameters
+        in: body
+        name: params
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UserCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            allOf:
+            - $ref: '#/definitions/app.Res'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.UserDTO'
+              type: object
+        "403":
+          description: Insufficient privileges
+          schema:
+            $ref: '#/definitions/app.Res'
+      security:
+      - UserAuthToken: []
+      summary: Create a new user
+      tags:
+      - Config
+  /api/admin/users/list:
+    get:
+      description: Handle request to get all users.
+      parameters:
+      - description: Page number // 页码
+        in: query
+        name: page
+        type: integer
+      - description: Page size // 每页数量
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            allOf:
+            - $ref: '#/definitions/app.Res'
+            - properties:
+                data:
+                  allOf:
+                  - $ref: '#/definitions/app.ListRes'
+                  - properties:
+                      list:
+                        items:
+                          $ref: '#/definitions/dto.UserDTO'
+                        type: array
+                    type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/app.Res'
+      security:
+      - UserAuthToken: []
+      summary: Get all users
+      tags:
+      - Config
+  /api/admin/users/update:
+    post:
+      consumes:
+      - application/json
+      description: Update a user, requires admin privileges
+      parameters:
+      - description: Config Parameters
+        in: body
+        name: params
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UserUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            allOf:
+            - $ref: '#/definitions/app.Res'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.UserDTO'
+              type: object
+        "403":
+          description: Insufficient privileges
+          schema:
+            $ref: '#/definitions/app.Res'
+      security:
+      - UserAuthToken: []
+      summary: Update a user
+      tags:
+      - Config
+  /api/admin/ws_client/{traceId}:
+    delete:
+      description: Kick a WebSocket client by TraceID, requires admin privileges
+      parameters:
+      - description: Trace ID of the client
+        in: path
+        name: traceId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            $ref: '#/definitions/app.Res'
+        "403":
+          description: Insufficient privileges
+          schema:
+            $ref: '#/definitions/app.Res'
+      security:
+      - UserAuthToken: []
+      summary: Kick a WebSocket client
+      tags:
+      - System
   /api/admin/ws_clients:
     get:
       description: Get a list of all current WebSocket connections, requires admin
         privileges
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -2377,14 +2620,24 @@ paths:
       summary: Get connected WebSocket clients
       tags:
       - System
+  /api/auth/logout:
+    post:
+      description: |-
+        Handle user logout HTTP request, revoke current auth token.
+        处理用户退出登录 HTTP 请求，注销当前认证 Token。
+      responses:
+        "200":
+          description: Success
+          schema:
+            $ref: '#/definitions/app.Res'
+      security:
+      - UserAuthToken: []
+      summary: User logout
+      tags:
+      - User
   /api/backup/config:
     delete:
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: ID // ID
         example: 1
         in: query
@@ -2418,11 +2671,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Backup Parameters
         in: body
         name: params
@@ -2460,12 +2708,6 @@ paths:
       - Backup
   /api/backup/configs:
     get:
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -2496,11 +2738,6 @@ paths:
   /api/backup/execute:
     post:
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Backup Execute Parameters
         in: body
         name: params
@@ -2534,11 +2771,6 @@ paths:
   /api/backup/historys:
     get:
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Config ID // 配置 ID
         example: 1
         in: query
@@ -2596,11 +2828,6 @@ paths:
       description: Permanently delete a specific attachment record and its physical
         file
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: File path // 文件路径
         example: Image.png
         in: query
@@ -2640,11 +2867,6 @@ paths:
       description: Get raw binary data of an attachment by path, supports strong cache
         control
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Is in recycle bin // 是否在回收站
         example: false
         in: query
@@ -2684,11 +2906,6 @@ paths:
       - multipart/form-data
       description: Upload a file as an attachment
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Vault name
         in: formData
         name: vault
@@ -2735,11 +2952,6 @@ paths:
     get:
       description: Get attachment metadata (FileDTO) by path
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Is in recycle bin // 是否在回收站
         example: false
         in: query
@@ -2785,11 +2997,6 @@ paths:
       - application/json
       description: Permanently clear selected files from recycle bin
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Clear Parameters
         in: body
         name: params
@@ -2814,11 +3021,6 @@ paths:
       - application/json
       description: Rename an attachment to a new path
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Rename Parameters
         in: body
         name: params
@@ -2846,11 +3048,6 @@ paths:
     put:
       description: Restore deleted attachment from trash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Restore Parameters
         in: body
         name: params
@@ -2879,11 +3076,6 @@ paths:
       description: Get attachment list for current user with pagination, search, filter,
         and sort support
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Is in recycle bin // 是否在回收站
         example: false
         in: query
@@ -2948,11 +3140,6 @@ paths:
       - application/json
       description: Soft delete a folder by path or pathHash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Delete Parameters
         in: body
         name: params
@@ -2974,11 +3161,6 @@ paths:
     get:
       description: Get folder info for current user by path or pathHash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Folder path // 文件夹路径
         example: Projects/Work
         in: query
@@ -3017,11 +3199,6 @@ paths:
       - application/json
       description: Create a new folder or restore a deleted one by path
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Create Parameters
         in: body
         name: params
@@ -3050,11 +3227,6 @@ paths:
       description: List non-deleted files in a specific folder with pagination and
         sorting
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Folder path // 文件夹路径
         example: Projects
         in: query
@@ -3118,11 +3290,6 @@ paths:
       description: List non-deleted notes in a specific folder with pagination and
         sorting
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Folder path // 文件夹路径
         example: Projects
         in: query
@@ -3185,11 +3352,6 @@ paths:
     get:
       description: Get the complete folder tree structure for a vault
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Tree depth // 树深度
         example: 3
         in: query
@@ -3222,11 +3384,6 @@ paths:
     get:
       description: Get folder list for current user by parent path or pathHash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Folder path // 文件夹路径
         example: Projects
         in: query
@@ -3265,11 +3422,6 @@ paths:
   /api/git-sync/config:
     delete:
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Git Sync ID
         in: body
         name: params
@@ -3304,11 +3456,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Git Sync Parameters
         in: body
         name: params
@@ -3349,11 +3496,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Clean Parameters
         in: body
         name: params
@@ -3389,11 +3531,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Execute Parameters
         in: body
         name: params
@@ -3426,12 +3563,6 @@ paths:
       - GitSync
   /api/git-sync/configs:
     get:
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -3462,11 +3593,6 @@ paths:
   /api/git-sync/histories:
     get:
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - in: query
         name: configId
         type: integer
@@ -3513,11 +3639,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Validation Parameters
         in: body
         name: params
@@ -3565,11 +3686,6 @@ paths:
     delete:
       description: Move note to trash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Note path // 笔记路径
         example: ReadMe.md
         in: query
@@ -3607,11 +3723,6 @@ paths:
     get:
       description: Get specific note content and metadata by path or path hash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Is in recycle bin // 是否在回收站
         example: false
         in: query
@@ -3657,11 +3768,6 @@ paths:
       description: Handle note creation, modification, or renaming (identified by
         path change)
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Note Content
         in: body
         name: params
@@ -3691,11 +3797,6 @@ paths:
       - application/json
       description: Append content to the end of a note
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Append Parameters
         in: body
         name: params
@@ -3723,11 +3824,6 @@ paths:
     get:
       description: Get all other notes that link to the specified note
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Note path // 笔记路径
         example: ReadMe.md
         in: query
@@ -3770,11 +3866,6 @@ paths:
       - application/json
       description: Update or delete note frontmatter fields
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Frontmatter Modification Parameters
         in: body
         name: params
@@ -3802,11 +3893,6 @@ paths:
     get:
       description: Get all history records for a specific note with pagination
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Is in recycle bin // 是否在回收站
         example: false
         in: query
@@ -3865,11 +3951,6 @@ paths:
     get:
       description: Get specific note history content by history record ID
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: History Record ID
         format: int64
         in: query
@@ -3899,11 +3980,6 @@ paths:
       - application/json
       description: Restore note content to a specific history version
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Restore Parameters
         in: body
         name: params
@@ -3931,11 +4007,6 @@ paths:
     get:
       description: Get other notes that the specified note links to
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Note path // 笔记路径
         example: ReadMe.md
         in: query
@@ -3978,11 +4049,6 @@ paths:
       - application/json
       description: Insert content at the beginning of a note (after frontmatter)
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Prepend Parameters
         in: body
         name: params
@@ -4012,11 +4078,6 @@ paths:
       - application/json
       description: Permanently clear selected notes from recycle bin
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Clear Parameters
         in: body
         name: params
@@ -4041,11 +4102,6 @@ paths:
       - application/json
       description: Rename a note to a new path
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Rename Parameters
         in: body
         name: params
@@ -4076,11 +4132,6 @@ paths:
       description: Perform find and replace operation in a note, supporting regular
         expressions
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Find and Replace Parameters
         in: body
         name: params
@@ -4108,11 +4159,6 @@ paths:
     put:
       description: Restore deleted note from trash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Restore Parameters
         in: body
         name: params
@@ -4140,11 +4186,6 @@ paths:
     get:
       description: Get note list for current user with pagination
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Is in recycle bin // 是否在回收站
         example: false
         in: query
@@ -4221,11 +4262,6 @@ paths:
   /api/notes/share-paths:
     get:
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Vault name
         in: query
         name: vault
@@ -4254,11 +4290,6 @@ paths:
       - application/json
       description: Soft delete a setting by path or pathHash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Delete Parameters
         in: body
         name: params
@@ -4280,11 +4311,6 @@ paths:
     get:
       description: Get setting info for current user by path or pathHash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Setting path // 配置路径
         example: User/Theme
         in: query
@@ -4323,11 +4349,6 @@ paths:
       - application/json
       description: Create a new setting or update an existing one
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Create/Update Parameters
         in: body
         name: params
@@ -4357,11 +4378,6 @@ paths:
       - application/json
       description: Rename a setting and update its path and pathHash
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Rename Parameters
         in: body
         name: params
@@ -4389,11 +4405,6 @@ paths:
     get:
       description: Get setting list for current user with pagination and keyword filtering
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Keyword // 关键词
         example: User/
         in: query
@@ -4443,11 +4454,6 @@ paths:
       - application/json
       description: Cancel a share by ID or path parameters
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Cancel Parameters
         in: body
         name: params
@@ -4469,11 +4475,6 @@ paths:
     get:
       description: Get share token and info by vault and path
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Resource path // 资源路径
         example: ReadMe.md
         in: query
@@ -4513,11 +4514,6 @@ paths:
       description: Create a share token for a specific note or attachment, automatically
         resolve attachment references and authorize
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Share Parameters
         in: body
         name: params
@@ -4617,11 +4613,6 @@ paths:
       - application/json
       description: Set or update password for a share record
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Update Parameters
         in: body
         name: params
@@ -4646,11 +4637,6 @@ paths:
       - application/json
       description: Call sink.cool API to generate a short link for a given share record
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Short Link Parameters
         in: body
         name: params
@@ -4679,11 +4665,6 @@ paths:
       description: Get all active and inactive shares of the user, supports sorting
         and pagination
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: 'Sort field: created_at, updated_at, expires_at (default: created_at)'
         in: query
         name: sort_by
@@ -4727,11 +4708,6 @@ paths:
   /api/storage:
     delete:
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Storage ID
         format: int64
         in: query
@@ -4751,12 +4727,6 @@ paths:
       tags:
       - Storage
     get:
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -4780,11 +4750,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Storage Parameters
         in: body
         name: params
@@ -4834,11 +4799,6 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Storage Parameters
         in: body
         name: params
@@ -4914,11 +4874,6 @@ paths:
       description: Get sync log list for current user with optional type/action filters
         and pagination
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Action type // 操作类型
         example: modify
         in: query
@@ -4974,11 +4929,6 @@ paths:
         Handle password change request for current user, validate old password and update new password.
         处理当前用户的修改密码请求，验证旧密码并更新新密码。
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Change Password Parameters
         in: body
         name: params
@@ -5012,12 +4962,6 @@ paths:
       description: |-
         Handle request to get current user info.
         处理获取当前用户信息的请求。
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -5110,11 +5054,6 @@ paths:
       description: Permanently delete a specific note vault and all associated notes
         and attachments
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Vault ID // 保险库 ID
         example: 1
         in: query
@@ -5136,12 +5075,6 @@ paths:
       - Vault
     get:
       description: Get all note vaults for current user
-      parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       produces:
       - application/json
       responses:
@@ -5167,11 +5100,6 @@ paths:
       description: Be used to create a new vault or update an existing vault configuration
         based on the ID in the request parameters
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Vault Parameters
         in: body
         name: params
@@ -5195,15 +5123,34 @@ paths:
       summary: Create or update vault
       tags:
       - Vault
+  /api/vault/force-delete-item:
+    post:
+      consumes:
+      - application/json
+      description: Permanently delete a single note or file (attachment) in a vault
+      parameters:
+      - description: Delete Parameters
+        in: body
+        name: params
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VaultForceDeleteItemRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            $ref: '#/definitions/app.Res'
+      security:
+      - UserAuthToken: []
+      summary: Force delete a single item
+      tags:
+      - Vault
   /api/vault/get:
     get:
       description: Get specific vault configuration details by vault ID
       parameters:
-      - description: Auth Token
-        in: header
-        name: token
-        required: true
-        type: string
       - description: Vault ID
         format: int64
         in: query
@@ -5227,6 +5174,31 @@ paths:
       summary: Get vault details
       tags:
       - Vault
+  /api/vault/rebuild-index:
+    post:
+      consumes:
+      - application/json
+      description: Rebuild full-text search index from physical database and files
+        for a specific vault, restricted to webgui client
+      parameters:
+      - description: Rebuild Index Parameters
+        in: body
+        name: params
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VaultRebuildIndexRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            $ref: '#/definitions/app.Res'
+      security:
+      - UserAuthToken: []
+      summary: Rebuild vault FTS index
+      tags:
+      - Vault
   /api/version:
     get:
       description: Get current server software version, Git tag, and build time
@@ -5243,6 +5215,27 @@ paths:
                   $ref: '#/definitions/dto.VersionDTO'
               type: object
       summary: Get server version info
+      tags:
+      - System
+  /api/version/probe:
+    get:
+      description: Parallel-probe GitHub and CNB release endpoints, return reachability,
+        latency, recommended source and current selected mode
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            allOf:
+            - $ref: '#/definitions/app.Res'
+            - properties:
+                data:
+                  $ref: '#/definitions/dto.SourceProbeDTO'
+              type: object
+      security:
+      - UserAuthToken: []
+      summary: Probe version sources latency
       tags:
       - System
   /api/webgui/config:

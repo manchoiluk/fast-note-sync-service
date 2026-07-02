@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/haierkeys/fast-note-sync-service/internal/app"
 	"github.com/haierkeys/fast-note-sync-service/internal/dto"
+	"github.com/haierkeys/fast-note-sync-service/internal/middleware"
 	svcmocks "github.com/haierkeys/fast-note-sync-service/internal/service/mocks"
 	pkgapp "github.com/haierkeys/fast-note-sync-service/pkg/app"
 	"github.com/haierkeys/fast-note-sync-service/pkg/code"
@@ -226,3 +227,62 @@ func TestVaultHandler_Delete_NoUID(t *testing.T) {
 	assertResponseCode(t, w, code.ErrorNotUserAuthToken.Code())
 	mockSvc.AssertExpectations(t)
 }
+
+// --- RebuildIndex ---
+
+// TestVaultHandler_RebuildIndex_Success verifies successful index rebuilding from webgui client.
+// TestVaultHandler_RebuildIndex_Success 验证从 webgui 客户端发起重建全文搜索索引成功。
+func TestVaultHandler_RebuildIndex_Success(t *testing.T) {
+	mockSvc := new(svcmocks.MockVaultService)
+	mockSvc.On("RebuildIndex", mock.Anything, int64(1), int64(10)).
+		Return(nil)
+
+	handler := newVaultHandler(mockSvc)
+	body := `{"id": 10}`
+	c, w := newVaultTestContext("POST", "/api/vault/rebuild-index", body, 1)
+	c.Request.Header.Set("X-Client", "webgui")
+	handler.RebuildIndex(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assertResponseCode(t, w, code.Success.Code())
+	mockSvc.AssertExpectations(t)
+}
+
+// TestVaultHandler_RebuildIndex_ClientRestricted verifies that non-webgui clients are restricted.
+// TestVaultHandler_RebuildIndex_ClientRestricted 验证非 webgui 客户端发起重建全文搜索索引被拒绝。
+func TestVaultHandler_RebuildIndex_ClientRestricted(t *testing.T) {
+	mockSvc := new(svcmocks.MockVaultService)
+
+	handler := newVaultHandler(mockSvc)
+	body := `{"id": 10}`
+	c, w := newVaultTestContext("POST", "/api/vault/rebuild-index", body, 1)
+	c.Request.Header.Set("X-Client", "not-webgui")
+
+	// Execute middleware.RequireWebGUI to verify non-webgui client is rejected
+	// 执行 middleware.RequireWebGUI 验证非 webgui 客户端被拦截（与生产路由行为一致）
+	middleware.RequireWebGUI()(c)
+	if !c.IsAborted() {
+		handler.RebuildIndex(c)
+	}
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assertResponseCode(t, w, code.ErrorAuthTokenClientRestricted.Code())
+	mockSvc.AssertExpectations(t)
+}
+
+// TestVaultHandler_RebuildIndex_NoUID verifies auth error when UID is missing.
+// TestVaultHandler_RebuildIndex_NoUID 验证缺少 UID 时返回认证错误。
+func TestVaultHandler_RebuildIndex_NoUID(t *testing.T) {
+	mockSvc := new(svcmocks.MockVaultService)
+
+	handler := newVaultHandler(mockSvc)
+	body := `{"id": 10}`
+	c, w := newVaultTestContext("POST", "/api/vault/rebuild-index", body, 0)
+	c.Request.Header.Set("X-Client", "webgui")
+	handler.RebuildIndex(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assertResponseCode(t, w, code.ErrorNotUserAuthToken.Code())
+	mockSvc.AssertExpectations(t)
+}
+
